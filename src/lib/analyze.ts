@@ -22,8 +22,15 @@ import { clamp } from '@/src/lib/format'
  * demonstrable range, and must never be presented as a measurement.
  */
 
-/** Mean frame brightness (0..255) below which a capture is unusable. */
-export const DARK_THRESHOLD = 55
+/**
+ * Mean frame brightness (0..255) below which a capture is unusable.
+ * A close-up eye capture (eyelashes, lid crease shadow, pupil) is naturally
+ * darker on average than a normal well-lit face/selfie, so this stays well
+ * below what would count as "too dark" for a typical photo — it's only meant
+ * to catch a genuinely failed/black capture, not flag a realistic close-up
+ * shot taken in ordinary indoor lighting.
+ */
+export const DARK_THRESHOLD = 28
 
 /** Max grid samples per axis. Caps work at ~9k samples regardless of resolution. */
 const GRID = 96

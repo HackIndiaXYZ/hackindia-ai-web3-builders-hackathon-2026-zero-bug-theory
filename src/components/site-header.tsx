@@ -37,8 +37,12 @@ export interface SiteHeaderProps {
   active: ScreenId
   /** Saved scan count, surfaced next to the History link. */
   historyCount?: number
-  /** The signed-in Firebase user — this header only ever renders once one exists. */
-  user: User
+  /**
+   * The signed-in Firebase user, or null. Only the doctor portal requires
+   * sign-in — the scanner itself is the public landing-page flow and stays
+   * reachable without any auth, so this header renders in both states.
+   */
+  user: User | null
   onSignOut: () => void
   className?: string
 }
@@ -145,15 +149,17 @@ export function SiteHeader({
             <ScanEye className="size-4" data-icon="inline-start" aria-hidden="true" />
             Scan
           </Button>
-          <button
-            type="button"
-            onClick={onSignOut}
-            title={`Sign out ${user.displayName ?? user.email ?? ''}`}
-            aria-label="Sign out"
-            className="ring-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <LogOut className="size-4" aria-hidden="true" />
-          </button>
+          {user && (
+            <button
+              type="button"
+              onClick={onSignOut}
+              title={`Sign out ${user.displayName ?? user.email ?? ''}`}
+              aria-label="Sign out"
+              className="ring-focus inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              <LogOut className="size-4" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
     </header>

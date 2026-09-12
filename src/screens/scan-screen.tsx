@@ -29,6 +29,13 @@ interface ScanScreenProps {
 type Mode = 'loading' | 'camera' | 'denied' | 'fallback'
 type Facing = 'user' | 'environment'
 
+// `image/*` alone is enough in most browsers, but some platforms don't tag
+// HEIC/HEIF files with an image/* MIME type in the file picker, so the
+// extensions are listed explicitly too. Actual decoding of anything the
+// <img> element can't read natively (HEIC/HEIF) is handled in
+// handleFileChange below via heic2any.
+const UPLOAD_ACCEPT = 'image/*,.heic,.heif,.avif,.tif,.tiff,.bmp,.gif,.webp,.png,.jpg,.jpeg'
+
 interface Checks {
   light: boolean
   position: boolean
@@ -385,10 +392,16 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
 
       // Asymmetric thresholds (looser to stay on than to turn on) stop the
       // chips from chattering when a reading sits right on the boundary.
+      // Kept in step with analyze.ts's DARK_THRESHOLD (28): a close-up eye
+      // capture (eyelashes, lid crease shadow, pupil) reads naturally darker
+      // than a normal well-lit face, so this stays well below what would
+      // flag a typical selfie as "too dark" — the old 60/52 floor was
+      // stricter than the actual scoring check, so it could read "not
+      // ready" on frames that would have scanned fine anyway.
       setChecks((prev) => {
         const light = prev.light
-          ? ema.light > 52 && ema.light < 244
-          : ema.light > 60 && ema.light < 235
+          ? ema.light > 27 && ema.light < 244
+          : ema.light > 35 && ema.light < 235
         const position =
           light && (prev.position ? ema.contrast > 0.042 : ema.contrast > 0.055)
         const clarity = light && (prev.clarity ? ema.detail > 0.024 : ema.detail > 0.032)
@@ -689,6 +702,19 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
     setAttempt((value) => value + 1)
   }, [])
 
+  // Decodes whatever image file the user picked, converting HEIC/HEIF (the
+  // default format iPhones save photos in, which Chrome/Firefox/Edge can't
+  // decode natively) to JPEG first via heic2any. Everything else goes
+  // straight through as-is — the browser's own <img> decoder already
+  // covers JPEG/PNG/GIF/BMP/WEBP/AVIF.
+  const toDecodableBlob = useCallback(async (file: File): Promise<Blob> => {
+    const looksLikeHeic = /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
+    if (!looksLikeHeic) return file
+    const heic2any = (await import('heic2any')).default
+    const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
+    return Array.isArray(converted) ? converted[0] : converted
+  }, [])
+
   const handleFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0]
@@ -699,12 +725,10 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       capturingRef.current = true
       setFlash(true)
 
-      const url = URL.createObjectURL(file)
-      objectUrlRef.current = url
       const image = new Image()
 
       image.onload = () => {
-        URL.revokeObjectURL(url)
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
         objectUrlRef.current = null
         const canvas = canvasRef.current
         // A gallery photo has no reticle to align to, so the centre square is
@@ -721,14 +745,22 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       }
 
       image.onerror = () => {
-        URL.revokeObjectURL(url)
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
         objectUrlRef.current = null
         abortCapture('That file could not be read as an image. Try a JPEG or PNG photo.')
       }
 
-      image.src = url
+      toDecodableBlob(file)
+        .then((blob) => {
+          const url = URL.createObjectURL(blob)
+          objectUrlRef.current = url
+          image.src = url
+        })
+        .catch(() => {
+          abortCapture("Couldn't read that photo. Try a JPEG, PNG, or HEIC image.")
+        })
     },
-    [finishCapture, abortCapture],
+    [finishCapture, abortCapture, toDecodableBlob],
   )
 
   /* ----------------------------------------------------------------------- */
@@ -843,7 +875,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept={UPLOAD_ACCEPT}
         className="hidden"
         onChange={handleFileChange}
       />

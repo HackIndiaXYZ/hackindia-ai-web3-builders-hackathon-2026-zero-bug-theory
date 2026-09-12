@@ -21,6 +21,11 @@
  *   One owner for the doctor queue. `reports` is in-memory only — sending a
  *   screening to a clinician is a prototype workflow, not a persisted one, so
  *   it deliberately does not survive a reload the way scan history does.
+ *
+ *   Scoped auth. Only the doctor portal needs an authenticated clinician —
+ *   the scanner itself is the public landing-page flow and stays reachable
+ *   without any sign-in. The Firebase gate lives inside the `doctor` branch
+ *   below, not around the whole app.
  * -------------------------------------------------------------------------- */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -374,19 +379,6 @@ export default function App() {
     [showChrome],
   )
 
-  /* ---- Firebase auth gate — before anything else can render -------------- */
-  if (!authReady) {
-    return <div className="flex min-h-dvh w-full bg-background" />
-  }
-
-  if (!user) {
-    return (
-      <div className="flex min-h-dvh w-full flex-col bg-background">
-        <AuthScreen />
-      </div>
-    )
-  }
-
   return (
     <div className="relative flex min-h-dvh w-full flex-col overflow-x-hidden bg-background">
       <a
@@ -476,9 +468,18 @@ export default function App() {
             />
           )}
 
-          {screen === 'doctor' && (
-            <DoctorPortal reports={reports} onBack={() => back('home')} onSaveAdvice={saveDoctorAdvice} />
-          )}
+          {screen === 'doctor' &&
+            // Only the doctor portal needs an authenticated clinician — the
+            // scanner itself is the public landing-page flow and stays
+            // reachable without any sign-in, so auth is gated here, not
+            // around the whole app.
+            (!authReady ? (
+              <div className="min-h-dvh bg-background" />
+            ) : user ? (
+              <DoctorPortal reports={reports} onBack={() => back('home')} onSaveAdvice={saveDoctorAdvice} />
+            ) : (
+              <AuthScreen onBack={() => back('home')} />
+            ))}
         </div>
       </main>
 
