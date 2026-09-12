@@ -1,6 +1,11 @@
 import type { ScanAnalysis } from '@/src/lib/types'
 
-const DARK_THRESHOLD = 55
+// A close-up eye capture (eyelashes, lid crease shadow, pupil) is
+// naturally darker on average than a normal well-lit face/selfie, so this
+// stays well below what would count as "too dark" for a typical photo —
+// it's only meant to catch a genuinely failed/black capture, not flag a
+// realistic close-up shot taken in ordinary indoor lighting.
+const DARK_THRESHOLD = 28
 
 function riskLevelFromScore(score: number): ScanAnalysis['riskLevel'] {
   if (score >= 65) return 'Elevated Risk'

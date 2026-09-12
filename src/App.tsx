@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { User } from 'firebase/auth'
-import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth'
 import { SiteHeader } from '@/src/components/site-header'
 import { AuthScreen } from '@/src/components/auth-screen'
-import { DoctorPortal } from '@/src/components/doctor-portal'
 import { HomeScreen } from '@/src/screens/home-screen'
 import { ScanScreen } from '@/src/screens/scan-screen'
 import { ProcessingScreen } from '@/src/screens/processing-screen'
 import { ResultScreen } from '@/src/screens/result-screen'
 import { InsightsScreen } from '@/src/screens/insights-screen'
 import { InconclusiveScreen } from '@/src/screens/inconclusive-screen'
+import { DoctorPortal } from '@/src/components/doctor-portal'
 import type { DoctorReport, ScanAnalysis, ScreenId } from '@/src/lib/types'
 import { auth, isFirebaseConfigured } from '@/src/lib/firebase'
 
@@ -24,7 +23,6 @@ export default function App() {
 
   useEffect(() => {
     if (!auth) return
-
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser)
       setAuthReady(true)
@@ -43,32 +41,23 @@ export default function App() {
   const goHome = useCallback(() => setScreen('home'), [])
   const sendToDoctor = useCallback((patientLabel: string) => {
     if (!analysis) return
-    setReports((current) => [{ id: `R-${Date.now()}`, patientLabel, analysis, submittedAt: new Date().toISOString(), status: 'Awaiting Review' }, ...current])
+    setReports((current) => [{ id: `R-${Date.now()}`, patientLabel, analysis: { ...analysis }, submittedAt: new Date().toISOString(), status: 'Awaiting Review' }, ...current])
   }, [analysis])
   const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string) => {
     setReports((current) => current.map((report) => report.id === reportId ? { ...report, doctorAdvice, status: 'Reviewed', reviewedAt: new Date().toISOString() } : report))
   }, [])
+  // Only the doctor portal needs an authenticated clinician — the scanner
+  // itself is the public landing-page flow and stays reachable without any
+  // sign-in. `screen === 'doctor'` is gated below, not the whole app.
   const showHeader = !IMMERSIVE_SCREENS.includes(screen) && screen !== 'doctor'
-
-  if (!authReady) {
-    return <div className="flex min-h-dvh w-full bg-background" />
-  }
-
-  if (!user) {
-    return (
-      <div className="flex min-h-dvh w-full flex-col bg-background">
-        <AuthScreen />
-      </div>
-    )
-  }
 
   return (
     <div className="flex min-h-dvh w-full flex-col bg-background">
       {showHeader && (
         <SiteHeader
           onHome={goHome}
-          user={user}
           onDoctorPortal={() => setScreen('doctor')}
+          user={user}
           onSignOut={() => auth && signOut(auth)}
         />
       )}
@@ -101,7 +90,14 @@ export default function App() {
           <InconclusiveScreen onRetake={() => setScreen('scan')} onExit={goHome} />
         )}
 
-        {screen === 'doctor' && <DoctorPortal reports={reports} onBack={goHome} onSaveAdvice={saveDoctorAdvice} />}
+        {screen === 'doctor' &&
+          (!authReady ? (
+            <div className="min-h-dvh bg-background" />
+          ) : user ? (
+            <DoctorPortal reports={reports} onBack={goHome} onSaveAdvice={saveDoctorAdvice} />
+          ) : (
+            <AuthScreen onBack={goHome} />
+          ))}
       </main>
     </div>
   )
