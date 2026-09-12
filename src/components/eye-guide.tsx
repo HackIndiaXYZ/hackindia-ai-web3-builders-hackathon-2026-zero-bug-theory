@@ -1,11 +1,16 @@
+import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 interface EyeGuideProps {
   ready: boolean
   className?: string
+  /** A live/zoomed camera preview to show inside the guide frame. When
+   * omitted, the frame falls back to decorative guide artwork only (used
+   * on the home screen and the instructions/loading steps). */
+  children?: ReactNode
 }
 
-export function EyeGuide({ ready, className }: EyeGuideProps) {
+export function EyeGuide({ ready, className, children }: EyeGuideProps) {
   return (
     <div className={cn('relative flex items-center justify-center', className)}>
       <div
@@ -20,11 +25,14 @@ export function EyeGuide({ ready, className }: EyeGuideProps) {
           ready
             ? 'border-primary/80 shadow-[0_0_60px_-8px_var(--primary)]'
             : 'border-white/20',
+          children && 'bg-black',
         )}
       >
+        {children}
+
         <svg
           viewBox="0 0 200 120"
-          className="h-full w-full"
+          className="absolute inset-0 h-full w-full"
           role="img"
           aria-label="Eye alignment guide"
         >
@@ -35,14 +43,21 @@ export function EyeGuide({ ready, className }: EyeGuideProps) {
             strokeWidth="2.5"
             className="transition-all duration-500"
           />
-          <circle
-            cx="100"
-            cy="60"
-            r="26"
-            fill={ready ? 'var(--accent)' : 'rgba(255,255,255,0.06)'}
-            className="transition-all duration-500"
-          />
-          <circle cx="100" cy="60" r="13" fill="rgba(10,12,16,0.55)" />
+          {/* Filled pupil/iris art only makes sense on the decorative
+              (no live feed) variant — over a real zoomed eye it would just
+              paint an opaque blob in the middle of the preview. */}
+          {!children && (
+            <>
+              <circle
+                cx="100"
+                cy="60"
+                r="26"
+                fill={ready ? 'var(--accent)' : 'rgba(255,255,255,0.06)'}
+                className="transition-all duration-500"
+              />
+              <circle cx="100" cy="60" r="13" fill="rgba(10,12,16,0.55)" />
+            </>
+          )}
         </svg>
 
         <div className="pointer-events-none absolute inset-x-0 top-0 h-full">

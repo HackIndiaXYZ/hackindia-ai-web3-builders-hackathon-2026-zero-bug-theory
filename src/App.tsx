@@ -46,14 +46,21 @@ export default function App() {
   const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string) => {
     setReports((current) => current.map((report) => report.id === reportId ? { ...report, doctorAdvice, status: 'Reviewed', reviewedAt: new Date().toISOString() } : report))
   }, [])
+  // Only the doctor portal needs an authenticated clinician — the scanner
+  // itself is the public landing-page flow and stays reachable without any
+  // sign-in. `screen === 'doctor'` is gated below, not the whole app.
   const showHeader = !IMMERSIVE_SCREENS.includes(screen) && screen !== 'doctor'
-
-  if (!authReady) return <div className="min-h-dvh bg-background" />
-  if (!user) return <div className="flex min-h-dvh flex-col bg-background"><AuthScreen /></div>
 
   return (
     <div className="flex min-h-dvh w-full flex-col bg-background">
-      {showHeader && <SiteHeader onHome={goHome} onDoctorPortal={() => setScreen('doctor')} onSignOut={() => signOut(auth!)} />}
+      {showHeader && (
+        <SiteHeader
+          onHome={goHome}
+          onDoctorPortal={() => setScreen('doctor')}
+          user={user}
+          onSignOut={() => auth && signOut(auth)}
+        />
+      )}
 
       <main className="flex flex-1 flex-col">
         {screen === 'home' && <HomeScreen onStart={() => setScreen('scan')} />}
@@ -83,7 +90,14 @@ export default function App() {
           <InconclusiveScreen onRetake={() => setScreen('scan')} onExit={goHome} />
         )}
 
-        {screen === 'doctor' && <DoctorPortal reports={reports} onBack={goHome} onSaveAdvice={saveDoctorAdvice} />}
+        {screen === 'doctor' &&
+          (!authReady ? (
+            <div className="min-h-dvh bg-background" />
+          ) : user ? (
+            <DoctorPortal reports={reports} onBack={goHome} onSaveAdvice={saveDoctorAdvice} />
+          ) : (
+            <AuthScreen onBack={goHome} />
+          ))}
       </main>
     </div>
   )
