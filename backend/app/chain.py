@@ -40,6 +40,42 @@ class ChainNotConfigured(RuntimeError):
     pass
 
 
+# Networks the MST SDK's Client can resolve by name. Anything else is signed
+# locally against MST_RPC_URL (see _LocalClient).
+SDK_NETWORKS = frozenset({"mainnet", "testnet"})
+
+
+class _LocalSigner:
+    """The subset of the SDK Signer interface this adapter uses."""
+
+    def __init__(self, private_key: str):
+        from eth_account import Account
+
+        self.account = Account.from_key(private_key)
+
+    def get_address(self) -> str:
+        return self.account.address
+
+
+class _LocalProvider:
+    def __init__(self, web3: Web3):
+        self.web3 = web3
+
+
+class _LocalClient:
+    """Stand-in for the SDK Client when talking to a non-MST chain.
+
+    Used for local development and integration testing against a Hardhat node,
+    which is what makes the on-chain path verifiable end to end without
+    testnet funds. Exposes exactly the two attributes `_send` and
+    `_send_transaction` rely on: `.signer` and `.provider.web3`.
+    """
+
+    def __init__(self, private_key: str, web3: Web3):
+        self.signer = _LocalSigner(private_key)
+        self.provider = _LocalProvider(web3)
+
+
 def _load_abi(contract_name: str) -> list[dict[str, Any]]:
     path = _ARTIFACTS_DIR / f"{contract_name}.sol" / f"{contract_name}.json"
     if not path.exists():
@@ -96,7 +132,7 @@ class MstChainClient:
 
     # -- signing ---------------------------------------------------------
 
-    def _signer_client(self, role: Role) -> Client:
+    def _signer_client(self, role: Role):
         if role not in self._signer_clients:
             key_by_role = {
                 "attester": self.settings.mst_attester_private_key,
@@ -109,7 +145,18 @@ class MstChainClient:
                     f"No private key configured for role={role!r}. Set MST_{role.upper()}_PRIVATE_KEY "
                     "(or MST_ATTESTER_PRIVATE_KEY as a fallback) in backend/.env."
                 )
-            self._signer_clients[role] = Client(self.settings.mst_network, pk)
+            if self.settings.mst_network in SDK_NETWORKS:
+                self._signer_clients[role] = Client(self.settings.mst_network, pk)
+            else:
+                # Any other network name (e.g. "localhost" against a Hardhat
+                # node) is signed locally. The SDK's Client only accepts
+                # 'mainnet'/'testnet', and more importantly its
+                # `provider.web3` resolves the RPC from that NAME rather than
+                # from MST_RPC_URL — so using it for a local chain would sign
+                # against one endpoint and broadcast to another. Everything
+                # the adapter actually needs from the SDK signer is account
+                # management, which is plain eth_account.
+                self._signer_clients[role] = _LocalClient(pk, self._ro_web3)
         return self._signer_clients[role]
 
     def address_for(self, role: Role) -> str:

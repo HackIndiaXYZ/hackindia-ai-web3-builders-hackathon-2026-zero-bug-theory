@@ -14,15 +14,46 @@ interface EyeGuideProps {
 }
 
 /**
- * The aperture is a centred square of this fraction of the component's box, and
- * the dashed ROI rectangle is drawn inside it at analyze.ts's exact ROI
- * (x 18%, y 26%, w 64%, h 48%).
+ * THE SINGLE SOURCE OF TRUTH FOR THE CAPTURE GEOMETRY.
  *
- * scan-screen.tsx imports this to project the on-screen reticle back into the
- * video's pixel space, so the captured square really is the contents of the
- * dashed box. Keep it in step with the `h-[78%] w-[78%]` aperture class below.
+ * The reticle draws two nested boxes: an aperture, which is a centred square of
+ * this fraction of the component's box, and — inside it — the dashed rectangle
+ * the coaching copy tells the user to fill.
+ *
+ * scan-screen.tsx imports both constants and projects them back into the
+ * video's own pixel space, so the frame that leaves the device is exactly the
+ * dashed rectangle. That is not a detail. The crop used to be the whole
+ * aperture, which holds the eyeball, the lashes and the skin around them, so
+ * the upload was 1.56x wider and 2.08x taller than the area the user had been
+ * told was "the exact area the analyser reads" — and square, where the dashed
+ * box is landscape. Nothing downstream could tell the difference, because the
+ * two numbers lived in two files. They now exist exactly once, here, and both
+ * the aperture element and the SVG below are sized from them rather than from
+ * literals that quietly drifted apart.
  */
 export const EYE_GUIDE_APERTURE_RATIO = 0.78
+
+/**
+ * The dashed analysis rectangle, as fractions of the aperture square.
+ *
+ * Deliberately landscape rather than square: an everted lower lid is a wide,
+ * shallow strip, and scan-screen.tsx uploads it with that shape intact. The
+ * server pads the tissue it locates onto a square canvas itself (see
+ * `_pad_to_square` in backend/app/ml/roi.py), so forcing a square here would
+ * only mean sending cheek and brow to be thrown away again.
+ */
+export const EYE_GUIDE_ROI = {
+  x: 0.18,
+  y: 0.26,
+  width: 0.64,
+  height: 0.48,
+} as const
+
+/**
+ * The SVG's own coordinate space. Declared so the dashed rect can be drawn
+ * straight from the fractions above instead of from pre-multiplied literals.
+ */
+const VIEW = 200
 
 /**
  * Corner brackets, drawn as four quarter-frames so they read as a camera
@@ -48,9 +79,12 @@ const mixForeground = (percent: number) =>
 /**
  * The capture reticle.
  *
- * The dashed inner rectangle is not decoration: it mirrors the analyser's
- * region of interest, and scan-screen.tsx crops to exactly this box, so
- * whatever the user lines up inside it is what gets measured.
+ * The dashed inner rectangle is not decoration: on a live capture it IS the
+ * upload. scan-screen crops to exactly this box from the same EYE_GUIDE_ROI
+ * fractions, so whatever the user lines up inside it is what the screening
+ * service receives, and nothing outside it leaves the device. (A photo picked
+ * from the gallery has no reticle to aim at, so that path uploads the whole
+ * image and says so in its own copy.)
  *
  * `ready` is the composite of every live capture check. On lock the brackets
  * pull in, the reticle warms to the primary colour, the sweep stops and an
@@ -101,16 +135,23 @@ export function EyeGuide({ ready, className, decorative = false }: EyeGuideProps
         )}
       />
 
-      {/* Aperture — a centred square of EYE_GUIDE_APERTURE_RATIO of this box */}
+      {/* Aperture — a centred square of EYE_GUIDE_APERTURE_RATIO of this box.
+          Sized from the exported constant rather than a `h-[78%]` literal,
+          because Tailwind's arbitrary value could not be kept in step with the
+          crop math in scan-screen.tsx and silently wasn't. */}
       <div
         className={cn(
-          'relative flex h-[78%] w-[78%] items-center justify-center overflow-hidden rounded-[46%] border transition-all duration-500',
+          'relative flex items-center justify-center overflow-hidden rounded-[46%] border transition-all duration-500',
           ready
             ? 'border-primary/80 shadow-[0_0_60px_-10px_var(--primary)]'
             : 'border-foreground/20',
         )}
+        style={{
+          height: `${EYE_GUIDE_APERTURE_RATIO * 100}%`,
+          width: `${EYE_GUIDE_APERTURE_RATIO * 100}%`,
+        }}
       >
-        <svg viewBox="0 0 200 200" className="h-full w-full" {...labelProps}>
+        <svg viewBox={`0 0 ${VIEW} ${VIEW}`} className="h-full w-full" {...labelProps}>
           <defs>
             <radialGradient id="eye-guide-iris" cx="50%" cy="42%" r="62%">
               <stop offset="0%" stopColor={irisCore} />
@@ -122,12 +163,14 @@ export function EyeGuide({ ready, className, decorative = false }: EyeGuideProps
             </linearGradient>
           </defs>
 
-          {/* Analyser region of interest */}
+          {/* The uploaded region. Drawn from EYE_GUIDE_ROI, the same fractions
+              scan-screen.tsx crops with, so the box on screen and the pixels on
+              the wire cannot drift apart again. */}
           <rect
-            x="36"
-            y="52"
-            width="128"
-            height="96"
+            x={EYE_GUIDE_ROI.x * VIEW}
+            y={EYE_GUIDE_ROI.y * VIEW}
+            width={EYE_GUIDE_ROI.width * VIEW}
+            height={EYE_GUIDE_ROI.height * VIEW}
             rx="16"
             fill="none"
             stroke={faint}

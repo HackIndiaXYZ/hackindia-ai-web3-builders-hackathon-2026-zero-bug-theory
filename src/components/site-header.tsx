@@ -39,9 +39,12 @@ export interface SiteHeaderProps {
   /** Saved scan count, surfaced next to the History link. */
   historyCount?: number
   /**
-   * The signed-in Firebase user, or null. Only the doctor portal requires
-   * sign-in — the scanner itself is the public landing-page flow and stays
-   * reachable without any auth, so this header renders in both states.
+   * The signed-in Firebase user, or null. Scanning requires sign-in: the
+   * screening endpoint is authenticated, so a signed-out capture is refused
+   * before it is ever scored — which is what the consent notice tells people
+   * up front. The header still renders in both states, because the landing
+   * page, the guide and this device's history all stay readable signed out;
+   * only the sign-out control is conditional on `user`.
    */
   user: User | null
   onSignOut: () => void

@@ -15,17 +15,19 @@
  *   to the new screen's heading and names the new screen in a live region.
  *
  *   One owner for history. Scan history is loaded once and persisted exactly at
- *   the transition into a result — never on render, and never for a frame the
- *   analyser rejected as too dark.
+ *   the transition into a result — never on render, and never for a capture the
+ *   screening service refused.
  *
  *   One owner for the doctor queue. `reports` is in-memory only — sending a
  *   screening to a clinician is a prototype workflow, not a persisted one, so
  *   it deliberately does not survive a reload the way scan history does.
  *
- *   Scoped auth. Only the doctor portal needs an authenticated clinician —
- *   the scanner itself is the public landing-page flow and stays reachable
- *   without any sign-in. The Firebase gate lives inside the `doctor` branch
- *   below, not around the whole app.
+ *   Auth around the whole capture flow. Scanning is not a local computation:
+ *   the photo is uploaded, and POST /inference/predict refuses a request with
+ *   no Firebase ID token. The gate below therefore covers the camera and the
+ *   processing handoff as well as the doctor portal — the app used to gate only
+ *   the portal, which meant the scan flow walked someone through a camera, a
+ *   capture and a consent notice before the server turned them away with a 401.
  * -------------------------------------------------------------------------- */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -68,6 +70,17 @@ const CAPTURE_SCREENS: ScreenId[] = ['processing']
 /** Screens that need an active analysis to render anything at all. */
 const ANALYSIS_SCREENS: ScreenId[] = ['result', 'insights']
 
+/**
+ * Screens that need a signed-in user.
+ *
+ * The scan flow is on this list because the screening endpoint is
+ * authenticated: the frame is uploaded and scored on the server, and a request
+ * without a valid ID token gets a 401 and no result. Asking up front is the
+ * honest order — the consent notice already tells people an account is
+ * required.
+ */
+const AUTHENTICATED_SCREENS: ScreenId[] = ['scan', 'processing', 'doctor']
+
 const SCREEN_IDS: ScreenId[] = [
   'home',
   'scan',
@@ -79,17 +92,9 @@ const SCREEN_IDS: ScreenId[] = [
   'learn',
   'blockchain',
   'doctor',
+  'patient-auth',
+  'patient-profile',
 ]
-
-/**
- * Below this confidence the capture is not worth scoring. `tooDark` in
- * src/lib/analyze.ts only catches an *under*-exposed frame; a blown-out or
- * badly framed one keeps tooDark = false yet lands in single-digit confidence,
- * where the score is noise. Showing "Elevated Risk 97" off a white frame would
- * be the single most misleading thing this app could do, so both cases route to
- * the inconclusive screen and neither is written to history.
- */
-const MIN_SCORABLE_CONFIDENCE = 25
 
 /** Only these are safe to land on from a cold URL — the rest need session state. */
 const DEEP_LINKABLE: ScreenId[] = ['home', 'learn', 'history', 'blockchain']
@@ -100,7 +105,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   scan: 'Camera',
   processing: 'Analysing your scan',
   result: 'Your screening result',
-  insights: 'Signal insights',
+  insights: 'Result details',
   inconclusive: 'Scan inconclusive',
   history: 'Scan history',
   learn: 'Learn about anaemia',
@@ -113,6 +118,16 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
 interface ShellHistoryState {
   screen?: string
   depth?: number
+}
+
+/** Why the inconclusive screen is showing, and everything the server said. */
+interface InconclusiveInfo {
+  /** 'quality' — the capture was refused. 'error' — the service failed. */
+  reason: 'quality' | 'error'
+  /** The sentence to show. From the server on a refusal. */
+  message?: string
+  /** Machine-readable refusal codes, so the screen can be specific. */
+  reasons?: string[]
 }
 
 function isScreenId(value: unknown): value is ScreenId {
@@ -136,10 +151,7 @@ export default function App() {
   )
   const [capture, setCapture] = useState<CapturedImage | null>(null)
   const [analysis, setAnalysis] = useState<ScanAnalysis | null>(null)
-  const [inconclusiveInfo, setInconclusiveInfo] = useState<{
-    reason: 'quality' | 'error'
-    message?: string
-  }>({ reason: 'quality' })
+  const [inconclusiveInfo, setInconclusiveInfo] = useState<InconclusiveInfo>({ reason: 'quality' })
   const [history, setHistory] = useState<ScanAnalysis[]>(() => loadHistory())
   const [reports, setReports] = useState<DoctorReport[]>([])
   const [consented, setConsented] = useState<boolean>(() => hasAcknowledged())
@@ -149,6 +161,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured)
+  /** Set when the screening service itself rejected the session mid-flow, so
+   *  the sign-in screen can say why it appeared instead of looking like a bug. */
+  const [authNotice, setAuthNotice] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     if (!auth) return
@@ -169,8 +184,20 @@ export default function App() {
         setPatientProfile(null)
       }
       setAuthReady(true)
+      if (nextUser) setAuthNotice(undefined)
     })
   }, [])
+
+  /** A gated screen with nobody signed in renders the sign-in card instead.
+   *  While Firebase is still resolving we render neither, rather than flashing
+   *  a login at someone who is already signed in. */
+  const needsAuth = AUTHENTICATED_SCREENS.includes(screen) && authReady && !user
+
+  /* The sign-in card is an ordinary page: it keeps the header and tab bar even
+     on screens that are otherwise immersive or carry their own chrome. */
+  const immersive = IMMERSIVE_SCREENS.includes(screen) && !needsAuth
+  const ownsChrome = OWN_CHROME_SCREENS.includes(screen) && !needsAuth
+  const showChrome = !immersive && !ownsChrome
 
   /** How many entries deep into the app we are, so `back` never escapes it. */
   const depthRef = useRef(0)
@@ -270,8 +297,11 @@ export default function App() {
 
   /* ---- scroll, focus and announce every screen change ------------------- */
   useEffect(() => {
-    setAnnouncement(SCREEN_TITLES[screen])
-    document.title = screen === 'home' ? 'AnemiaScan' : `${SCREEN_TITLES[screen]} · AnemiaScan`
+    // A gated screen showing the sign-in card is announced as sign-in, not as
+    // the camera it is standing in for.
+    const title = needsAuth ? 'Sign in' : SCREEN_TITLES[screen]
+    setAnnouncement(title)
+    document.title = screen === 'home' ? 'AnemiaScan' : `${title} · AnemiaScan`
 
     if (focusedScreenRef.current === null) {
       // First paint: announce, but never yank focus off the consent notice.
@@ -287,9 +317,11 @@ export default function App() {
     // matches its current state (camera, permission denied, no camera) on mount
     // and on every state change, because entering the camera unmounts the header
     // and bottom nav the user just activated. ProcessingScreen is deliberately
-    // left alone: it is a sub-two-second handoff that unmounts itself, and the
-    // screen that replaces it takes focus normally.
-    if (IMMERSIVE_SCREENS.includes(screen)) return
+    // left alone: it is a handoff that unmounts itself the moment the screening
+    // service answers, and the screen that replaces it takes focus normally.
+    // `immersive` (not the raw list) is the condition, so the sign-in card that
+    // can stand in for either of them still gets focus.
+    if (immersive) return
 
     const container = mainRef.current
     if (!container) return
@@ -304,7 +336,7 @@ export default function App() {
     }
     target.addEventListener('blur', release, { once: true })
     return () => target.removeEventListener('blur', release)
-  }, [screen])
+  }, [screen, immersive, needsAuth])
 
   /* ---- flow handlers ---------------------------------------------------- */
 
@@ -335,31 +367,51 @@ export default function App() {
     [replace],
   )
 
-  /** ProcessingScreen has already submitted the frame to the real screening
-   *  backend (src/lib/api.ts) and merged the result onto the on-device
-   *  heuristic by the time this fires — see src/screens/processing-screen.tsx. */
+  /** The screening service accepted the capture and returned a result.
+   *  Everything in `result` came back from the server — see
+   *  src/screens/processing-screen.tsx, which no longer computes anything. */
   const handleProcessingDone = useCallback(
     (result: ScanAnalysis) => {
       setAnalysis(result)
-      if (result.tooDark || result.confidence < MIN_SCORABLE_CONFIDENCE) {
-        // A rejected frame is never written to history.
-        setInconclusiveInfo({ reason: 'quality' })
-        replace('inconclusive')
-        return
-      }
       setHistory(saveScan(result))
       replace('result')
     },
     [replace],
   )
 
+  /** The server refused the capture (HTTP 422). It names why, in codes and in a
+   *  sentence; both go through to the inconclusive screen, which is the only
+   *  way someone can tell a dark room from a photo of a wall. Nothing is saved
+   *  to history: a refused capture produced no result to save. */
+  const handleProcessingRecapture = useCallback(
+    (reasons: string[], message: string) => {
+      setInconclusiveInfo({ reason: 'quality', message, reasons })
+      replace('inconclusive')
+    },
+    [replace],
+  )
+
   /** The screening service could not be reached at all (network failure, the
    *  backend being down, or an unexpected server error) — distinct from a
-   *  quality-rejected capture, which still gets a normal 200/422 response. */
+   *  refused capture, which comes back as a normal 422 with reasons. */
   const handleProcessingError = useCallback(
     (message: string) => {
       setInconclusiveInfo({ reason: 'error', message })
       replace('inconclusive')
+    },
+    [replace],
+  )
+
+  /** The screening endpoint rejected the session (HTTP 401/403). Sign out and
+   *  send the user back through the camera entrance, which now shows sign-in:
+   *  a token the server will not accept is not a session we should pretend to
+   *  still hold. */
+  const handleAuthRequired = useCallback(
+    (message: string) => {
+      setAuthNotice(message)
+      setCapture(null)
+      if (auth) void signOut(auth)
+      replace('scan')
     },
     [replace],
   )
@@ -416,15 +468,15 @@ export default function App() {
 
   /* ---- chrome ----------------------------------------------------------- */
 
-  const immersive = IMMERSIVE_SCREENS.includes(screen)
-  const ownsChrome = OWN_CHROME_SCREENS.includes(screen)
-  const showChrome = !immersive && !ownsChrome
   const historyCount = history.length
 
   const navOffset = useMemo(
     () => (showChrome ? 'bottom-[calc(5.6rem+env(safe-area-inset-bottom,0px))] md:bottom-6' : ''),
     [showChrome],
   )
+
+  /** Firebase has not reported yet: hold the frame rather than flash a login. */
+  const authPending = AUTHENTICATED_SCREENS.includes(screen) && !authReady
 
   return (
     <div className="relative flex min-h-dvh w-full flex-col overflow-x-hidden bg-background">
@@ -459,6 +511,19 @@ export default function App() {
         )}
       >
         <div key={screen} className={cn('flex flex-1 flex-col', !immersive && 'animate-fade-in')}>
+          {authPending && <div className="min-h-dvh bg-background" />}
+
+          {/* One sign-in card for every gated screen. The scan flow is gated
+              because the screening endpoint is authenticated; the doctor portal
+              because the queue is clinical. */}
+          {needsAuth && (
+            <AuthScreen
+              purpose={screen === 'doctor' ? 'doctor' : 'scan'}
+              notice={authNotice}
+              onBack={() => back('home')}
+            />
+          )}
+
           {screen === 'home' && (
             <HomeScreen
               onStart={handleBeginScan}
@@ -472,15 +537,17 @@ export default function App() {
 
           {screen === 'blockchain' && <BlockchainScreen analysis={analysis} onBack={() => back('home')} />}
 
-          {screen === 'scan' && (
+          {screen === 'scan' && !needsAuth && !authPending && (
             <ScanScreen onCapture={handleCaptured} onExit={() => back('home')} />
           )}
 
-          {screen === 'processing' && capture && (
+          {screen === 'processing' && capture && !needsAuth && !authPending && (
             <ProcessingScreen
               capture={capture}
               onDone={handleProcessingDone}
+              onRecapture={handleProcessingRecapture}
               onError={handleProcessingError}
+              onAuthRequired={handleAuthRequired}
             />
           )}
 
@@ -489,6 +556,7 @@ export default function App() {
               onRetake={() => replace('scan')}
               onExit={() => back('home')}
               reason={inconclusiveInfo.reason}
+              reasons={inconclusiveInfo.reasons}
               message={inconclusiveInfo.message}
             />
           )}
@@ -519,35 +587,30 @@ export default function App() {
             />
           )}
 
-          {screen === 'doctor' &&
-            // Only the doctor portal needs an authenticated clinician — the
-            // scanner itself is the public landing-page flow and stays
-            // reachable without any sign-in, so auth is gated here, not
-            // around the whole app.
-            (!authReady ? (
-              <div className="min-h-dvh bg-background" />
-            ) : user ? (
-              <DoctorPortal reports={reports} onBack={() => back('home')} onSaveAdvice={saveDoctorAdvice} />
-            ) : (
-              <AuthScreen onBack={() => back('home')} />
-            ))}
+          {screen === 'doctor' && !needsAuth && !authPending && (
+            <DoctorPortal
+              reports={reports}
+              onBack={() => back('home')}
+              onSaveAdvice={saveDoctorAdvice}
+            />
+          )}
 
           {screen === 'patient-auth' && (
             <PatientAuthScreen onBack={() => back('home')} />
           )}
 
           {screen === 'patient-profile' && (
-            <PatientProfileScreen 
-              onBack={() => back('home')} 
+            <PatientProfileScreen
+              onBack={() => back('home')}
               onComplete={() => {
                 // Manually set patient profile so we don't have to wait for onAuthStateChanged refetch
-                if (auth?.currentUser) {
-                  getDoc(doc(db!, 'patients', auth.currentUser.uid)).then(snap => {
+                if (auth?.currentUser && db) {
+                  getDoc(doc(db, 'patients', auth.currentUser.uid)).then((snap) => {
                     if (snap.exists()) setPatientProfile(snap.data() as PatientProfile)
                   })
                 }
                 replace('scan')
-              }} 
+              }}
             />
           )}
         </div>

@@ -1,0 +1,33 @@
+{
+  "selected_candidate": "logistic_stacker",
+  "thresholds": {
+    "selected_candidate": "logistic_stacker",
+    "selected_threshold": 0.20755079254891556,
+    "logistic_stacker": 0.20755079254891556,
+    "regularized_gated_fusion": 0.1854661003399828,
+    "target_sensitivity": 0.9,
+    "uncertainty_margin": 0.040521640384822644
+  },
+  "calibration": {
+    "logistic_stacker": {
+      "method": "platt",
+      "parameters": {
+        "coefficient": 0.4174691353350448,
+        "intercept": 0.22520197874437697
+      }
+    },
+    "regularized_gated_fusion": {
+      "method": "platt",
+      "parameters": {
+        "coefficient": 0.30488082994822013,
+        "intercept": 0.15774667152381366
+      }
+    }
+  },
+  "base_models": {
+    "efficientnet_b3": "base_models/efficientnet_b3_best.pth",
+    "convnext_tiny": "base_models/convnext_tiny_best.pth"
+  },
+  "gated_model": "anemiafusionnet_v3_1_gated.pth",
+  "stacker_model": "stacking_model.joblib"
+}

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#070b12" />
     <meta name="robots" content="noindex" />
-    <meta name="description" content="AnemiaScan is offline. The app analyses scans entirely on your device, so it keeps working without a connection once it has been loaded." />
+    <meta name="description" content="AnemiaScan is offline. Your saved scans stay readable without a connection, but taking a new one needs the network to reach the model that scores it." />
     <title>Offline — AnemiaScan</title>
 
     <!--
@@ -371,12 +371,13 @@
 
       <p class="chip"><span class="dot" aria-hidden="true"></span> No connection</p>
 
-      <h1>You&rsquo;re offline &mdash; the scanner still isn&rsquo;t.</h1>
+      <h1>You&rsquo;re offline &mdash; and so is the scanner.</h1>
 
       <p class="lede">
-        AnemiaScan runs its analysis entirely on your device, so once the app has been loaded it
-        does not need the internet. This page only appears because your browser asked for
-        something that has not been cached yet.
+        The app shell and your saved scans are cached on this device, so most of AnemiaScan keeps
+        working. Scoring a new photo does not: the image has to reach the model on our server.
+        This page only appears because your browser asked for something that has not been cached
+        yet.
       </p>
 
       <section class="panel" aria-labelledby="works-offline">
@@ -384,15 +385,17 @@
         <ul>
           <li>
             <span class="mark yes" aria-hidden="true">&check;</span>
-            <span><b>Capturing a scan.</b> The camera and the image analysis both run locally.</span>
-          </li>
-          <li>
-            <span class="mark yes" aria-hidden="true">&check;</span>
-            <span><b>Your results and history.</b> Stored in this browser, never uploaded.</span>
+            <span><b>Your results and history.</b> Kept in this browser, and they open in full
+              with no connection.</span>
           </li>
           <li>
             <span class="mark yes" aria-hidden="true">&check;</span>
             <span><b>The learn pages.</b> Guidance and FAQs ship with the app.</span>
+          </li>
+          <li>
+            <span class="mark yes" aria-hidden="true">&check;</span>
+            <span><b>Deleting what you have stored.</b> Clearing history is a local write; it
+              never needed the network.</span>
           </li>
         </ul>
       </section>
@@ -400,6 +403,15 @@
       <section class="panel" aria-labelledby="needs-network">
         <h2 id="needs-network">Needs a connection</h2>
         <ul>
+          <li>
+            <span class="mark no" aria-hidden="true">&minus;</span>
+            <span><b>Taking a new scan.</b> The photo is uploaded over HTTPS and scored on our
+              server &mdash; there is no offline model.</span>
+          </li>
+          <li>
+            <span class="mark no" aria-hidden="true">&minus;</span>
+            <span><b>Signing in.</b> A free account is required before a scan can be submitted.</span>
+          </li>
           <li>
             <span class="mark no" aria-hidden="true">&minus;</span>
             <span><b>The very first load</b> on a new device or browser profile.</span>

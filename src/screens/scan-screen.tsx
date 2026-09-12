@@ -15,7 +15,7 @@ import {
   TimerOff,
   X,
 } from 'lucide-react'
-import { EYE_GUIDE_APERTURE_RATIO, EyeGuide } from '@/src/components/eye-guide'
+import { EYE_GUIDE_APERTURE_RATIO, EYE_GUIDE_ROI, EyeGuide } from '@/src/components/eye-guide'
 import { ScanSignals, type ScanSignal } from '@/src/components/scan-signals'
 import { clamp } from '@/src/lib/format'
 import type { CapturedImage } from '@/src/lib/types'
@@ -29,12 +29,56 @@ interface ScanScreenProps {
 type Mode = 'loading' | 'camera' | 'denied' | 'fallback'
 type Facing = 'user' | 'environment'
 
-// `image/*` alone is enough in most browsers, but some platforms don't tag
-// HEIC/HEIF files with an image/* MIME type in the file picker, so the
-// extensions are listed explicitly too. Actual decoding of anything the
-// <img> element can't read natively (HEIC/HEIF) is handled in
+// Deliberately the same set the screening service accepts, rather than a broad
+// `image/*`: offering a TIFF or a RAW in the picker only to reject it after the
+// user has waited for a decode is worse than not offering it. Some platforms
+// don't tag HEIC/HEIF with an image/* MIME type in the file picker, so the
+// extensions are listed explicitly too. HEIC/HEIF — what iPhones save photos
+// as, and what Chrome/Firefox/Edge cannot decode — is converted to JPEG in
 // handleFileChange below via heic2any.
-const UPLOAD_ACCEPT = 'image/*,.heic,.heif,.avif,.tif,.tiff,.bmp,.gif,.webp,.png,.jpg,.jpeg'
+const UPLOAD_ACCEPT =
+  'image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif'
+
+/** Verbatim from the backend's `allowed_image_types` (backend/app/config.py).
+ * The server sniffs the leading bytes and refuses anything else with a 415;
+ * checking here as well turns that into an instant, specific sentence instead
+ * of a failed round trip. */
+const ACCEPTED_UPLOAD_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+] as const
+
+/** Some pickers hand back a File with an empty `type` (HEIC on several Android
+ * builds, anything opened from a network share), so the extension is the
+ * fallback rather than an excuse to skip the check. */
+const ACCEPTED_UPLOAD_EXTENSIONS = /\.(jpe?g|png|webp|heic|heif)$/i
+
+/** The backend's `max_upload_bytes`. Every capture is re-encoded to a JPEG
+ * capped at ANALYSIS_MAX_EDGE before it goes anywhere, so the bytes actually
+ * put on the wire are a small fraction of this; the check is here because
+ * decoding a 40MB file is what makes a mid-range phone fall over, and because
+ * a user who picked the wrong file deserves to hear so immediately. */
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+
+/** Human-readable size for the over-limit message. */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** True when the picked file is one of the formats the service reads. */
+function isAcceptedUpload(file: File): boolean {
+  const type = (file.type || '').split(';')[0].trim().toLowerCase()
+  if (type && (ACCEPTED_UPLOAD_TYPES as readonly string[]).includes(type)) return true
+  // Then the extension, rather than the label alone: pickers hand back an empty
+  // `type` for HEIC on several Android builds, and a few desktop tools still
+  // write the non-standard `image/jpg`. Both are files the browser decodes
+  // perfectly well, and every capture is re-encoded to a JPEG before upload, so
+  // whatever label the picker chose never reaches the server.
+  return ACCEPTED_UPLOAD_EXTENSIONS.test(file.name)
+}
 
 interface Checks {
   light: boolean
@@ -68,13 +112,34 @@ const COUNTDOWN_FROM = 3
 const COUNTDOWN_STEP = 900
 const SHUTTER_DELAY = 260
 
-/** Longest edge of the canvas handed to the analyser.
+/** Upper bound on the LONGER edge of the canvas we upload.
  *
- * analyze.ts only ever samples a 96x96 grid plus a 72x72 focus patch, so a full
- * 12 MP gallery photo buys nothing and costs a ~36 MB `getImageData`
+ * A full 12 MP gallery photo buys nothing and costs a ~36 MB `getImageData`
  * allocation that mid-range phones genuinely fail. Capping here also keeps the
  * JPEG data URL small enough for the localStorage quota in history.ts. */
 const ANALYSIS_MAX_EDGE = 1024
+
+/** Lower bound on the SHORTER edge of a LIVE capture, in output pixels.
+ *
+ * The server locates the conjunctiva inside whatever we send and then refuses
+ * the result if the located tissue's shorter side is under 96px — MIN_ROI_EDGE
+ * in backend/app/ml/roi.py, and the same floor again in `quality_report`. The
+ * dashed box is roughly 112 x 84 CSS pixels on a phone, and the preview is
+ * `object-cover`, which scales the stream UP to fill the screen; undo that
+ * scale and the same box is often only ~110 x 80 pixels of the actual video
+ * frame. The wet rim inside it is a fraction of that again, so a perfectly
+ * framed capture would come back "move a little closer" when the user was
+ * already as close as the guide asks for.
+ *
+ * The crop is therefore resampled up to this floor before it is encoded. That
+ * invents no detail and it is not a way around the gate: the network resizes
+ * the ROI's short side to 320 regardless of what arrives, and the server still
+ * measures real sharpness (a raw Laplacian-variance floor of 8.0), chroma
+ * plausibility and distance from the training distribution on the pixels it
+ * receives — a soft or empty frame still fails, as it should. Only the pure
+ * pixel-count test stops misfiring. 384 leaves the rim room to occupy well
+ * under half the box's height and still clear 96px. */
+const ANALYSIS_MIN_EDGE = 384
 
 /** Targets each raw reading is normalised against for the live readout. */
 const FRAMING_TARGET = 0.12
@@ -113,40 +178,49 @@ const HELP_STEPS = [
   },
   {
     title: 'Fill the dashed box',
-    body: 'Hold the phone roughly 15–20 cm away and centre that inner rim inside the dashed rectangle — that is the exact area the analyser reads.',
+    body: 'Hold the phone roughly 15–20 cm away and fill the dashed rectangle with that inner rim. Only what is inside the dashed box is sent — the rest of the frame stays on your phone.',
   },
   {
     title: 'Hold still',
-    body: 'When all four checks turn green the shutter releases itself. You can always tap the shutter yourself instead.',
+    body: 'When all four checks turn green the shutter releases itself. You can always tap the shutter yourself instead. The crop is then uploaded and analysed on our servers, and the result comes back in a few seconds.',
   },
 ] as const
 
-/** A square region in a source image's own pixel coordinates. */
-interface SourceSquare {
+/** A rectangular region in a source image's own pixel coordinates.
+ *
+ * Rectangular, not square. The everted lower lid is a wide, shallow strip and
+ * the dashed reticle box is shaped like one; squaring it off here would only
+ * add cheek and brow for the server to mask away again, and the server already
+ * pads what it locates onto a square canvas itself. */
+interface SourceRegion {
   sx: number
   sy: number
-  size: number
+  width: number
+  height: number
 }
 
 /**
- * Project the reticle's aperture back into the video's own pixel space.
+ * Project the dashed reticle box back into the video's own pixel space.
  *
  * The preview is `object-cover`, so the stream is scaled up until it covers the
  * element and then centred — most of a 16:9 stream's width is off-screen on a
- * phone. Cropping the centre square of the RAW frame therefore measures pixels
- * the user never saw (cheek, brow, background), which directly biases the
- * pallor, redness and saturation averages. This inverts that mapping so the
- * captured canvas IS the contents of the dashed box, which is what
- * EyeGuide promises and what analyze.ts's ROI then lines up with.
+ * phone. Cropping a centre square of the RAW frame therefore captures pixels
+ * the user never saw (cheek, brow, background). This inverts that mapping so
+ * the canvas IS the contents of the dashed box.
+ *
+ * It reads BOTH exported constants: the aperture is a centred square of the
+ * guide box, and EYE_GUIDE_ROI places the dashed rectangle inside that square.
+ * The previous version stopped at the aperture, so it uploaded a square 1.56x
+ * wider and 2.08x taller than the box the copy pointed at.
  *
  * Returns null when the geometry is not measurable yet; the caller falls back
- * to the centre square.
+ * to the whole frame.
  */
-function apertureSourceSquare(
+function guideSourceRegion(
   video: HTMLVideoElement,
   guide: HTMLElement | null,
   mirrored: boolean,
-): SourceSquare | null {
+): SourceRegion | null {
   const vw = video.videoWidth
   const vh = video.videoHeight
   if (!guide || !vw || !vh) return null
@@ -163,62 +237,114 @@ function apertureSourceSquare(
   const originX = el.left + (el.width - drawnW) / 2
   const originY = el.top + (el.height - drawnH) / 2
 
-  // EyeGuide draws its aperture (and the dashed ROI inside it) as a centred
-  // square of the guide box — see EYE_GUIDE_APERTURE_RATIO.
-  const side = Math.min(box.width, box.height) * EYE_GUIDE_APERTURE_RATIO
-  const screenLeft = box.left + box.width / 2 - side / 2
-  const screenTop = box.top + box.height / 2 - side / 2
+  // Step one: the aperture, a centred square of the guide box.
+  const aperture = Math.min(box.width, box.height) * EYE_GUIDE_APERTURE_RATIO
+  const apertureLeft = box.left + box.width / 2 - aperture / 2
+  const apertureTop = box.top + box.height / 2 - aperture / 2
 
-  const sizeInSource = side / scale
-  if (!Number.isFinite(sizeInSource) || sizeInSource < 8) return null
+  // Step two: the dashed rectangle inside it, in CSS pixels.
+  const screenLeft = apertureLeft + aperture * EYE_GUIDE_ROI.x
+  const screenTop = apertureTop + aperture * EYE_GUIDE_ROI.y
+  const screenWidth = aperture * EYE_GUIDE_ROI.width
+  const screenHeight = aperture * EYE_GUIDE_ROI.height
+
+  const width = Math.min(screenWidth / scale, vw)
+  const height = Math.min(screenHeight / scale, vh)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 8 || height < 8) return null
 
   const unmirroredX = (screenLeft - originX) / scale
   // A mirrored preview reflects about the element centre, which maps to
   // `vw - x` in source space once the centred object-cover offset is undone.
-  const rawX = mirrored ? vw - unmirroredX - sizeInSource : unmirroredX
+  const rawX = mirrored ? vw - unmirroredX - width : unmirroredX
   const rawY = (screenTop - originY) / scale
 
-  const size = Math.min(sizeInSource, vw, vh)
   return {
-    sx: clamp(rawX, 0, vw - size),
-    sy: clamp(rawY, 0, vh - size),
-    size,
+    sx: clamp(rawX, 0, vw - width),
+    sy: clamp(rawY, 0, vh - height),
+    width,
+    height,
   }
-}
-
-/** The centred square of a source, used when the reticle cannot be measured. */
-function centreSquare(width: number, height: number): SourceSquare | null {
-  const size = Math.min(width, height)
-  if (!Number.isFinite(size) || size < 8) return null
-  return { sx: (width - size) / 2, sy: (height - size) / 2, size }
 }
 
 /**
- * Draw one square source region into `canvas` at analysis resolution.
+ * The whole of a source image.
  *
- * Capping the output edge is what removes the allocation cliff: a 4032x3024
- * gallery photo would otherwise make `getImageData` allocate ~36MB and
- * `toDataURL` run over 12 megapixels, for a heuristic that only ever samples a
- * 96x96 grid. `mirrored` un-flips the front camera so the saved photo reads the
- * same way round as the preview the user framed in.
+ * Used for gallery photos — a stored photo was never aimed at the reticle, so
+ * there is no box to honour and any crop we invent is a guess at where the eye
+ * is. The server runs a conjunctiva localiser on whatever it receives, so
+ * handing it the full frame and letting it find the tissue is both simpler and
+ * more likely to succeed than cropping the centre square of a portrait of
+ * somebody's face. It is also the fallback for a live capture whose reticle
+ * could not be measured.
  */
-function drawAnalysisSquare(
+function wholeSource(width: number, height: number): SourceRegion | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+  if (width < 8 || height < 8) return null
+  return { sx: 0, sy: 0, width, height }
+}
+
+/**
+ * Draw one source region into `canvas` at upload resolution.
+ *
+ * Two bounds, applied in that order:
+ *
+ *   * ANALYSIS_MAX_EDGE caps the longer edge. This is what removes the
+ *     allocation cliff — a 4032x3024 gallery photo would otherwise make
+ *     `toDataURL` run over 12 megapixels on a phone.
+ *   * `minShortEdge` floors the shorter edge, resampling up when a live crop
+ *     is smaller than the server's ROI floor can survive. Callers pass 0 when
+ *     upscaling would be dishonest (a gallery photo is sent at its own
+ *     resolution; if it is genuinely tiny, the server should say so).
+ *
+ * The cap always wins over the floor, so a very long thin region is never
+ * blown up past the memory ceiling.
+ *
+ * `mirrored` un-flips the front camera so the saved photo reads the same way
+ * round as the preview the user framed in.
+ */
+function drawAnalysisRegion(
   canvas: HTMLCanvasElement,
   source: CanvasImageSource,
-  region: SourceSquare,
+  region: SourceRegion,
   mirrored: boolean,
+  minShortEdge = 0,
 ): boolean {
-  const out = Math.max(8, Math.round(Math.min(region.size, ANALYSIS_MAX_EDGE)))
-  canvas.width = out
-  canvas.height = out
+  const longEdge = Math.max(region.width, region.height)
+  const shortEdge = Math.min(region.width, region.height)
+  if (!(longEdge >= 8) || !(shortEdge >= 8)) return false
+
+  const capScale = Math.min(1, ANALYSIS_MAX_EDGE / longEdge)
+  const scale =
+    minShortEdge > 0 && shortEdge * capScale < minShortEdge
+      ? Math.min(minShortEdge / shortEdge, ANALYSIS_MAX_EDGE / longEdge)
+      : capScale
+
+  const outWidth = Math.max(8, Math.round(region.width * scale))
+  const outHeight = Math.max(8, Math.round(region.height * scale))
+  canvas.width = outWidth
+  canvas.height = outHeight
   const ctx = canvas.getContext('2d')
   if (!ctx) return false
+  // Explicit, because a resample in either direction now happens routinely and
+  // the browser default is per-implementation.
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
   ctx.save()
   if (mirrored) {
-    ctx.translate(out, 0)
+    ctx.translate(outWidth, 0)
     ctx.scale(-1, 1)
   }
-  ctx.drawImage(source, region.sx, region.sy, region.size, region.size, 0, 0, out, out)
+  ctx.drawImage(
+    source,
+    region.sx,
+    region.sy,
+    region.width,
+    region.height,
+    0,
+    0,
+    outWidth,
+    outHeight,
+  )
   ctx.restore()
   return true
 }
@@ -392,12 +518,14 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
 
       // Asymmetric thresholds (looser to stay on than to turn on) stop the
       // chips from chattering when a reading sits right on the boundary.
-      // Kept in step with analyze.ts's DARK_THRESHOLD (28): a close-up eye
-      // capture (eyelashes, lid crease shadow, pupil) reads naturally darker
-      // than a normal well-lit face, so this stays well below what would
-      // flag a typical selfie as "too dark" — the old 60/52 floor was
-      // stricter than the actual scoring check, so it could read "not
-      // ready" on frames that would have scanned fine anyway.
+      //
+      // These are coaching hints only — they decide when the shutter may fire,
+      // never whether a result is valid. The real gates live on the server
+      // (`quality_report` refuses a mean brightness under 12 or over 245), and
+      // this floor sits well above the dark one on purpose: a close-up eye
+      // capture (lashes, lid-crease shadow, pupil) reads naturally darker than
+      // a well-lit face, so a stricter chip would say "not ready" on frames
+      // the service would have scored perfectly happily.
       setChecks((prev) => {
         const light = prev.light
           ? ema.light > 27 && ema.light < 244
@@ -426,8 +554,14 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       }
 
       try {
+        // `ideal` rather than `min`, so a device that cannot manage this just
+        // returns its best and the scan still runs. Asking for more than the
+        // preview needs is deliberate: the dashed box is a small window onto
+        // the frame, and after ANALYSIS_MIN_EDGE the difference between 1280
+        // and 1920 is the difference between a real resample and an invented
+        // one.
         const stream = await media.getUserMedia({
-          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1280 } },
+          video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1920 } },
           audio: false,
         })
         if (cancelled) {
@@ -504,9 +638,9 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
 
   /**
    * Put the screen back into a usable state after a capture that could not be
-   * analysed, and say so. Without this, every early return below would leave
-   * the shutter permanently disabled with "Analysing on this device…" on screen
-   * and no way out but the X button.
+   * prepared, and say so. Without this, every early return below would leave
+   * the shutter permanently disabled under a "Sending…" message and no way out
+   * but the X button.
    */
   const abortCapture = useCallback((message: string) => {
     if (captureTimerRef.current) window.clearTimeout(captureTimerRef.current)
@@ -526,11 +660,13 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
     (canvas: HTMLCanvasElement) => {
       if (finishedRef.current) return
       try {
-        const size = Math.min(canvas.width, canvas.height)
-        if (size < 8) throw new Error('capture canvas is empty')
-        // The canvas already IS the region the user framed, at a capped
-        // resolution — this is handed to the real screening backend as-is
-        // (see src/lib/api.ts submitScreening), so no local analysis runs here.
+        if (Math.min(canvas.width, canvas.height) < 8) {
+          throw new Error('capture canvas is empty')
+        }
+        // The canvas already IS the region the user framed. It is uploaded
+        // as-is to the screening service (src/lib/api.ts submitScreening),
+        // which locates the conjunctiva, gates it and scores it. Nothing on
+        // this device looks at these pixels.
         const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85)
         canvas.toBlob(
           (blob) => {
@@ -565,11 +701,22 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
     setFileError(null)
     buzz(18)
 
-    const region =
-      apertureSourceSquare(video, guideRef.current, facing === 'user') ??
-      centreSquare(video.videoWidth, video.videoHeight)
+    // Only a crop that really came from the dashed box gets the ANALYSIS_MIN_EDGE
+    // floor. The fallback is the entire frame, which is already far larger than
+    // the floor and would only be blurred by touching it.
+    const guided = guideSourceRegion(video, guideRef.current, facing === 'user')
+    const region = guided ?? wholeSource(video.videoWidth, video.videoHeight)
 
-    if (!region || !drawAnalysisSquare(canvas, video, region, facing === 'user')) {
+    if (
+      !region ||
+      !drawAnalysisRegion(
+        canvas,
+        video,
+        region,
+        facing === 'user',
+        guided ? ANALYSIS_MIN_EDGE : 0,
+      )
+    ) {
       abortCapture('The camera did not give a readable frame. Give it a moment and try again.')
       return
     }
@@ -721,6 +868,26 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       event.target.value = ''
       if (!file) return
       setFileError(null)
+
+      // Fail fast, before the decode. Both bounds mirror the service's own
+      // `allowed_image_types` and `max_upload_bytes`, so the supported set is
+      // stated once; a wrong file gets a sentence the user can act on instead
+      // of a spinner that ends in "could not be prepared".
+      if (!isAcceptedUpload(file)) {
+        setFileError(
+          'AnemiaScan reads JPEG, PNG, WebP and HEIC photos. Pick a photo saved in one of those formats.',
+        )
+        return
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        setFileError(
+          `That photo is ${formatMegabytes(file.size)}. The limit is ${formatMegabytes(
+            MAX_UPLOAD_BYTES,
+          )} — pick a smaller one, or retake it at a lower resolution.`,
+        )
+        return
+      }
+
       setCapturing(true)
       capturingRef.current = true
       setFlash(true)
@@ -731,13 +898,15 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
         if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
         objectUrlRef.current = null
         const canvas = canvasRef.current
-        // A gallery photo has no reticle to align to, so the centre square is
-        // the honest crop — downscaled, which is what keeps a 12MP photo from
-        // failing the getImageData allocation on a mid-range phone.
-        const region = canvas
-          ? centreSquare(image.naturalWidth, image.naturalHeight)
-          : null
-        if (!canvas || !region || !drawAnalysisSquare(canvas, image, region, false)) {
+        // A stored photo was never aimed at the reticle, so there is no box to
+        // honour: send the whole frame (downscaled to ANALYSIS_MAX_EDGE, which
+        // is what keeps a 12MP photo from failing the allocation on a
+        // mid-range phone) and let the server's conjunctiva localiser find the
+        // tissue. No ANALYSIS_MIN_EDGE floor here — a gallery photo is already
+        // far bigger than it, and upscaling a genuinely tiny one would be
+        // hiding a problem rather than fixing it.
+        const region = canvas ? wholeSource(image.naturalWidth, image.naturalHeight) : null
+        if (!canvas || !region || !drawAnalysisRegion(canvas, image, region, false)) {
           abortCapture('That photo could not be prepared for analysis. Try another one.')
           return
         }
@@ -775,7 +944,10 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
    * still be mid-sentence when the shutter fires. The region carries one stable
    * instruction; the ticking digit is rendered aria-hidden next to the ring. */
   const coach = useMemo<{ text: string; tone: 'idle' | 'warn' | 'ready' }>(() => {
-    if (capturing) return { text: 'Captured. Analysing on this device…', tone: 'ready' }
+    // Not "analysing on this device" — nothing on this device reads these
+    // pixels. The crop is uploaded to the screening service, which is what
+    // decides everything the result screen shows.
+    if (capturing) return { text: 'Captured. Sending for analysis…', tone: 'ready' }
     if (mode === 'loading') return { text: 'Starting the camera…', tone: 'idle' }
     if (mode === 'denied') return { text: 'Camera access is blocked', tone: 'warn' }
     if (mode === 'fallback') return { text: 'No camera stream available', tone: 'warn' }
@@ -963,8 +1135,9 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
               </h1>
 
               {/* The wrapper, not EyeGuide itself, is measured: handleCapture
-                  projects this box back into the video's pixels so the crop is
-                  exactly what the reticle showed. */}
+                  projects this box through EYE_GUIDE_APERTURE_RATIO and
+                  EYE_GUIDE_ROI back into the video's pixels, so the crop is
+                  exactly the dashed rectangle the reticle showed. */}
               <div ref={guideRef} className="h-56 w-56 shrink-0 sm:h-64 sm:w-64">
                 <EyeGuide ready={ready} className="h-full w-full" />
               </div>
@@ -1052,7 +1225,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
               }}
               disabled={capturing}
               className={OVERLAY_BUTTON}
-              aria-label="Use a photo from this device instead"
+              aria-label="Use a photo from this device instead. The whole photo is sent, not a crop"
             >
               <ImageUp className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -1317,14 +1490,26 @@ function PermissionDenied({
           {busy ? 'Preparing…' : 'Use a photo instead'}
         </button>
       </div>
+
+      {/* There is no reticle to crop a stored photo against, so it goes up
+          whole. Saying so here stops "why did it read my whole face?". */}
+      <p className="text-2xs leading-relaxed text-white/70">
+        A photo from your device is uploaded in full, and our analyser looks for the inner eyelid
+        in it. Use a close-up where the pulled-down rim is large and sharp.
+      </p>
     </section>
   )
 }
 
+/* A stored photo cannot be aimed at the reticle, so it is uploaded whole and
+ * the server's localiser looks for the conjunctiva in it. The last line says
+ * so: it is the difference between "my crop is wrong" and "my photo is wrong"
+ * when a capture comes back refused. */
 const PHOTO_REQUIREMENTS = [
   'Bright, even light — no flash directly on the eye.',
   'Lower eyelid pulled down so the moist inner rim shows.',
-  'The rim centred and filling the middle of the frame.',
+  'The rim large and sharp — fill the frame with the eye, not the face.',
+  'The whole photo is uploaded, and our analyser finds the eyelid in it.',
 ] as const
 
 function NoCamera({

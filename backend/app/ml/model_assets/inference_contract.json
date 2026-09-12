@@ -1,0 +1,25 @@
+{
+  "input": "segmented palpebral/conjunctiva ROI image",
+  "colour_order": "OpenCV decode followed by RGB conversion",
+  "efficientnet": {
+    "resize": 320,
+    "crop": 300,
+    "normalization": "ImageNet"
+  },
+  "convnext": {
+    "resize": 236,
+    "crop": 224,
+    "normalization": "ImageNet"
+  },
+  "engineered_features": 32,
+  "selected_candidate": "logistic_stacker",
+  "calibration_file": "calibration.json",
+  "threshold_file": "thresholds.json",
+  "decisions": [
+    "higher_risk",
+    "lower_risk",
+    "uncertain",
+    "recapture_required"
+  ],
+  "warning": "Screening prototype only. A CBC/hemoglobin test is required for diagnosis."
+}

@@ -3,6 +3,12 @@
  *
  * Dates are formatted manually (rather than via toLocaleDateString) so the
  * output is stable across locales, test environments and server renders.
+ *
+ * The number helpers exist because the headline figure on the result screen is
+ * a CALIBRATED PROBABILITY in 0..1, not a score out of 100. Printing it needs
+ * care: `0.25` and `25%` are the same number but they read very differently
+ * next to a threshold of `0.208`, so both forms are produced here rather than
+ * being improvised per call site.
  */
 
 const MONTHS = [
@@ -88,4 +94,64 @@ export function formatDateTime(epochMs: number): string {
   const hours = String(date.getHours()).padStart(2, '0')
   const minutes = String(date.getMinutes()).padStart(2, '0')
   return `${dayAndMonth(date)} ${date.getFullYear()}, ${hours}:${minutes}`
+}
+
+/* -------------------------------------------------------------------------- */
+/* Numbers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Fixed-point, with a dash for anything that is not a real number. */
+export function formatFixed(value: number, digits = 2): string {
+  if (!Number.isFinite(value)) return '—'
+  return value.toFixed(digits)
+}
+
+/**
+ * A calibrated probability, printed as a probability.
+ *
+ * Three decimals is not decoration: the operating threshold is 0.2076 and the
+ * uncertainty margin is 0.0405, so two decimals would round a reading and its
+ * decision boundary onto the same number and hide exactly the comparison this
+ * screen is trying to show.
+ */
+export function formatProbability(value: number, digits = 3): string {
+  if (!Number.isFinite(value)) return '—'
+  return clamp(value, 0, 1).toFixed(digits)
+}
+
+/** The same probability expressed as a percentage, for the secondary reading. */
+export function formatPercent(value: number, digits = 1): string {
+  if (!Number.isFinite(value)) return '—'
+  return `${(clamp(value, 0, 1) * 100).toFixed(digits)}%`
+}
+
+/** Basis points (the wire format for probability and quality) as 0..100. */
+export function bpsToScore(bps: number): number {
+  if (!Number.isFinite(bps)) return 0
+  return Math.round(clamp(bps / 100, 0, 100))
+}
+
+/**
+ * Middle-truncate a 0x hash for display.
+ *
+ * Provenance values (the commitment, the scan-id hash, the model hash) are all
+ * 32-byte hex, which is far too long to print inline but must stay verifiable —
+ * so the head and tail are kept verbatim and the caller is expected to offer
+ * the full string for copying alongside it.
+ */
+export function shortHash(hash: string | null | undefined, lead = 10, tail = 8): string {
+  if (!hash) return '—'
+  if (hash.length <= lead + tail + 1) return hash
+  return `${hash.slice(0, lead)}…${hash.slice(-tail)}`
+}
+
+/**
+ * Turn a snake_case identifier from the inference contract into something
+ * readable, e.g. 'logistic_stacker' -> 'Logistic stacker'. Used for candidate
+ * model names and fusion branch names, which arrive as raw keys.
+ */
+export function humaniseKey(key: string): string {
+  if (!key) return '—'
+  const words = key.replace(/[_-]+/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }
