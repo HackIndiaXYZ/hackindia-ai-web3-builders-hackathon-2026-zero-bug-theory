@@ -1,0 +1,8 @@
+{
+  "selected_candidate": "logistic_stacker",
+  "selected_threshold": 0.20755079254891556,
+  "logistic_stacker": 0.20755079254891556,
+  "regularized_gated_fusion": 0.1854661003399828,
+  "target_sensitivity": 0.9,
+  "uncertainty_margin": 0.040521640384822644
+}

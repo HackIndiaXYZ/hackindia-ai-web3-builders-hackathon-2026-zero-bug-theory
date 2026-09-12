@@ -28,7 +28,7 @@ def test_golden_vector_matches_solidity_ground_truth():
         model_hash=fields["modelHash"],
         risk_code=fields["riskCode"],
         recommendation_code=fields["recommendationCode"],
-        confidence_bps=fields["confidenceBps"],
+        probability_bps=fields["probabilityBps"],
         quality_bps=fields["qualityBps"],
         consent_hash=fields["consentHash"],
         captured_at=fields["capturedAt"],
@@ -48,7 +48,7 @@ def test_commitment_is_sensitive_to_every_field():
         model_hash="0x" + "33" * 32,
         risk_code=1,
         recommendation_code=2,
-        confidence_bps=1000,
+        probability_bps=1000,
         quality_bps=2000,
         consent_hash="0x" + "44" * 32,
         captured_at=1700000000,
@@ -59,7 +59,7 @@ def test_commitment_is_sensitive_to_every_field():
     for key, bump in [
         ("risk_code", 2),
         ("recommendation_code", 3),
-        ("confidence_bps", 1001),
+        ("probability_bps", 1001),
         ("quality_bps", 2001),
         ("captured_at", 1700000001),
     ]:

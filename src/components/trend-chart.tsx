@@ -1,5 +1,5 @@
 /* --------------------------------------------------------------------------
- * TrendChart — hand-rolled inline SVG for screening score over time.
+ * TrendChart — hand-rolled inline SVG for screening probability over time.
  * --------------------------------------------------------------------------
  * No charting library: a measured container, a linear scale, one path for the
  * line and one for the area. The container width is observed so the chart can
@@ -8,8 +8,13 @@
  * A viewBox + preserveAspectRatio are still declared so the very first paint
  * (before measurement) is correctly proportioned rather than collapsed.
  *
- * The three risk bands are painted behind the series, so a reading is
- * interpretable without reading the axis.
+ * The y-axis is the CALIBRATED SCREENING PROBABILITY, 0 to 1. It used to be the
+ * 0–100 score of a local colour heuristic, shaded into three bands at 35 and 65
+ * — numbers that belonged to a heuristic which no longer exists. The shading is
+ * now the model's real decision geometry: the operating threshold, and the
+ * uncertainty margin either side of it inside which the model declines to call
+ * a result. When no scan in the series carries a threshold, nothing is shaded:
+ * an unlabelled axis is better than an invented boundary.
  *
  * Interaction: every point is a real <button> in an overlay, so hover, tap,
  * Tab, and Arrow keys all reach the same readout. The visible readout is
@@ -20,7 +25,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
-import { clamp, formatDateTime, formatRelativeTime } from '@/src/lib/format'
+import { clamp, formatDateTime, formatProbability, formatRelativeTime } from '@/src/lib/format'
 import { riskColorToken } from '@/src/lib/risk-style'
 import type { RiskToken } from '@/src/lib/risk-style'
 import type { ScanAnalysis } from '@/src/lib/types'
@@ -29,18 +34,8 @@ import type { ScanAnalysis } from '@/src/lib/types'
 /* Layout constants                                                           */
 /* -------------------------------------------------------------------------- */
 
-const PAD = { top: 14, right: 14, bottom: 26, left: 30 } as const
+const PAD = { top: 14, right: 14, bottom: 26, left: 34 } as const
 const FALLBACK_WIDTH = 360
-
-/** Band edges, matching the analyser's thresholds. */
-const MODERATE_FLOOR = 35
-const ELEVATED_FLOOR = 65
-
-const BANDS = [
-  { from: ELEVATED_FLOOR, to: 100, className: 'fill-risk/8', label: 'Elevated' },
-  { from: MODERATE_FLOOR, to: ELEVATED_FLOOR, className: 'fill-moderate/8', label: 'Moderate' },
-  { from: 0, to: MODERATE_FLOOR, className: 'fill-safe/8', label: 'Low' },
-] as const
 
 const POINT_FILL: Record<RiskToken, string> = {
   risk: 'fill-risk',
@@ -58,6 +53,39 @@ const TEXT_TONE: Record<RiskToken, string> = {
   risk: 'text-risk',
   moderate: 'text-moderate',
   safe: 'text-safe',
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reading the series                                                         */
+/* -------------------------------------------------------------------------- */
+
+/** The headline probability for one scan, read defensively. */
+function probabilityOf(scan: ScanAnalysis): number {
+  const direct = Number(scan.screeningProbability)
+  if (Number.isFinite(direct)) return clamp(direct, 0, 1)
+  const fromModel = Number(scan.modelOutput?.screeningProbability)
+  return Number.isFinite(fromModel) ? clamp(fromModel, 0, 1) : 0
+}
+
+/**
+ * The decision geometry to shade behind the series.
+ *
+ * Taken from the most recent scan that carries one, because the threshold is a
+ * property of the model version that scored a scan and could in principle move
+ * between releases. Returns null when nothing in the series has one — in which
+ * case the chart draws no bands at all rather than guessing a boundary.
+ */
+function decisionGeometry(
+  series: ScanAnalysis[],
+): { threshold: number; margin: number } | null {
+  for (let index = series.length - 1; index >= 0; index -= 1) {
+    const threshold = Number(series[index].modelOutput?.operatingThreshold)
+    if (!Number.isFinite(threshold) || threshold <= 0 || threshold >= 1) continue
+    const rawMargin = Number(series[index].modelOutput?.uncertaintyMargin)
+    const margin = Number.isFinite(rawMargin) ? clamp(rawMargin, 0, 1) : 0
+    return { threshold, margin }
+  }
+  return null
 }
 
 /* -------------------------------------------------------------------------- */
@@ -154,6 +182,8 @@ export function TrendChart({ items, className }: TrendChartProps) {
     [items],
   )
 
+  const geometry = useMemo(() => decisionGeometry(series), [series])
+
   const height = Math.round(clamp(width * 0.5, 172, 240))
   const plotW = Math.max(1, width - PAD.left - PAD.right)
   const plotH = Math.max(1, height - PAD.top - PAD.bottom)
@@ -166,7 +196,7 @@ export function TrendChart({ items, className }: TrendChartProps) {
     [series.length, plotW],
   )
   const yFor = useCallback(
-    (score: number) => PAD.top + (1 - clamp(score, 0, 100) / 100) * plotH,
+    (probability: number) => PAD.top + (1 - clamp(probability, 0, 1)) * plotH,
     [plotH],
   )
 
@@ -174,8 +204,9 @@ export function TrendChart({ items, className }: TrendChartProps) {
     () =>
       series.map((scan, index) => ({
         scan,
+        probability: probabilityOf(scan),
         x: xFor(index),
-        y: yFor(scan.riskScore),
+        y: yFor(probabilityOf(scan)),
         token: riskColorToken(scan.riskLevel),
       })),
     [series, xFor, yFor],
@@ -217,6 +248,30 @@ export function TrendChart({ items, className }: TrendChartProps) {
   const hitSize = Math.round(clamp(spacing, 20, 36))
   const pointRadius = points.length > 16 ? 2.6 : points.length > 8 ? 3.2 : 4
 
+  const uncertainFloor = geometry ? clamp(geometry.threshold - geometry.margin, 0, 1) : 0
+  const uncertainCeiling = geometry ? clamp(geometry.threshold + geometry.margin, 0, 1) : 0
+
+  /* Bands are only drawn when the series actually carries a threshold. Each is
+     a real region of the decision rule, not a presentational band. */
+  const bands = geometry
+    ? [
+        { key: 'higher', from: uncertainCeiling, to: 1, className: 'fill-risk/10' },
+        {
+          key: 'uncertain',
+          from: uncertainFloor,
+          to: uncertainCeiling,
+          className: 'fill-moderate/14',
+        },
+        { key: 'lower', from: 0, to: uncertainFloor, className: 'fill-safe/10' },
+      ]
+    : []
+
+  /* Axis ticks: the ends, the real threshold, and 0.50 — the last of these so a
+     reader can see that the decision boundary is nowhere near the midpoint. */
+  const ticks = Array.from(
+    new Set([0, ...(geometry ? [geometry.threshold] : []), 0.5, 1]),
+  ).sort((a, b) => a - b)
+
   return (
     <figure className={cn('m-0 flex flex-col gap-3', className)}>
       {/* readout — duplicates the focused point's accessible name, so hidden */}
@@ -226,7 +281,7 @@ export function TrendChart({ items, className }: TrendChartProps) {
       >
         <span className="flex items-baseline gap-2">
           <span className={cn('metric text-xl font-semibold', TEXT_TONE[shown.token])}>
-            {shown.scan.riskScore}
+            {formatProbability(shown.probability)}
           </span>
           <span className="text-xs font-medium text-foreground">{shown.scan.riskLevel}</span>
         </span>
@@ -253,13 +308,13 @@ export function TrendChart({ items, className }: TrendChartProps) {
             </linearGradient>
           </defs>
 
-          {/* risk bands */}
-          {BANDS.map((band) => {
+          {/* decision zones */}
+          {bands.map((band) => {
             const top = yFor(band.to)
             const bottom = yFor(band.from)
             return (
               <rect
-                key={band.label}
+                key={band.key}
                 x={PAD.left}
                 y={top}
                 width={plotW}
@@ -269,17 +324,19 @@ export function TrendChart({ items, className }: TrendChartProps) {
             )
           })}
 
-          {/* band edges + axis labels */}
-          {[0, MODERATE_FLOOR, ELEVATED_FLOOR, 100].map((value) => (
+          {/* axis gridlines + labels */}
+          {ticks.map((value) => (
             <g key={value}>
               <line
                 x1={PAD.left}
                 y1={yFor(value)}
                 x2={PAD.left + plotW}
                 y2={yFor(value)}
-                className="stroke-border"
+                className={
+                  geometry && value === geometry.threshold ? 'stroke-foreground/45' : 'stroke-border'
+                }
                 strokeWidth={1}
-                strokeDasharray={value === 0 || value === 100 ? undefined : '3 4'}
+                strokeDasharray={value === 0 || value === 1 ? undefined : '3 4'}
               />
               <text
                 x={PAD.left - 6}
@@ -288,7 +345,7 @@ export function TrendChart({ items, className }: TrendChartProps) {
                 fontSize={10}
                 className="fill-muted-foreground"
               >
-                {value}
+                {value === 0 || value === 1 ? value.toFixed(0) : value.toFixed(2)}
               </text>
             </g>
           ))}
@@ -365,7 +422,7 @@ export function TrendChart({ items, className }: TrendChartProps) {
         {/* keyboard- and pointer-reachable hit targets, one per point */}
         <div
           role="group"
-          aria-label={`Screening score over time, ${series.length} ${
+          aria-label={`Calibrated screening probability over time, ${series.length} ${
             series.length === 1 ? 'scan' : 'scans'
           }. Use the arrow keys to move between scans.`}
           className="absolute inset-0"
@@ -391,43 +448,48 @@ export function TrendChart({ items, className }: TrendChartProps) {
               }}
             >
               <span className="sr-only">
-                {`${dayLabel(point.scan.createdAt)} — score ${point.scan.riskScore} of 100, ${
-                  point.scan.riskLevel
-                }, ${formatRelativeTime(point.scan.createdAt)}`}
+                {`${dayLabel(point.scan.createdAt)} — screening probability ${formatProbability(
+                  point.probability,
+                )}, ${point.scan.riskLevel}, ${formatRelativeTime(point.scan.createdAt)}`}
               </span>
             </button>
           ))}
         </div>
       </div>
 
-      {/* legend */}
-      <ul className="flex list-none flex-wrap items-center gap-x-4 gap-y-1.5">
-        {BANDS.map((band) => (
-          <li key={band.label} className="inline-flex items-center gap-1.5">
-            <span
-              aria-hidden="true"
-              className={cn(
-                'size-2 rounded-full',
-                band.label === 'Elevated'
-                  ? DOT_BG.risk
-                  : band.label === 'Moderate'
-                    ? DOT_BG.moderate
-                    : DOT_BG.safe,
-              )}
-            />
+      {/* legend — the real decision rule, or an honest note that it is unknown */}
+      {geometry ? (
+        <ul className="flex list-none flex-wrap items-center gap-x-4 gap-y-1.5">
+          <li className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true" className={cn('size-2 rounded-full', DOT_BG.risk)} />
             <span className="text-2xs text-muted-foreground">
-              {band.label} {band.from}–{band.to}
+              Higher risk ≥ {formatProbability(geometry.threshold)}
             </span>
           </li>
-        ))}
-      </ul>
-
-      {series.length === 1 ? (
+          <li className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true" className={cn('size-2 rounded-full', DOT_BG.moderate)} />
+            <span className="text-2xs text-muted-foreground">
+              Uncertain {formatProbability(uncertainFloor)}–{formatProbability(uncertainCeiling)}
+            </span>
+          </li>
+          <li className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true" className={cn('size-2 rounded-full', DOT_BG.safe)} />
+            <span className="text-2xs text-muted-foreground">
+              Lower risk &lt; {formatProbability(uncertainFloor)}
+            </span>
+          </li>
+        </ul>
+      ) : (
         <p className="text-2xs leading-relaxed text-muted-foreground">
-          One scan recorded. Scan again in a few days, in similar light, to turn this point into a
-          trend.
+          These scans carry no operating threshold, so no decision boundary is drawn.
         </p>
-      ) : null}
+      )}
+
+      <p className="text-2xs leading-relaxed text-muted-foreground">
+        {series.length === 1
+          ? 'One scan recorded. Scan again in a few days, in similar light, to turn this point into a trend.'
+          : 'Each point is the calibrated screening probability the model returned for that capture — not a haemoglobin measurement, and not a measure of how ill anyone is.'}
+      </p>
     </figure>
   )
 }

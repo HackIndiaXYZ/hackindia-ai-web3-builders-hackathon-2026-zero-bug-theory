@@ -1,12 +1,36 @@
 /* --------------------------------------------------------------------------
  * ResultScreen — what the user sees the second a scan lands.
  * --------------------------------------------------------------------------
- * Everything on this screen is built around one rule: a screening score is not
- * a diagnosis, and the interface must never let that distinction blur. So the
- * gauge is labelled "score", the haemoglobin figure is labelled as an
- * illustrative interval and never as a measurement, low-confidence captures say
- * so before they say anything else, and the non-diagnostic notice is a
- * first-class card rather than small print.
+ * Everything on this screen is built around one rule: a screening result is not
+ * a diagnosis, and the interface must never let that distinction blur.
+ *
+ * WHAT THIS SCREEN USED TO DO, AND WHY IT HAD TO CHANGE
+ * ----------------------------------------------------
+ * It showed a "screening score X/100", a "confidence" figure that was hardcoded
+ * to 100 for every server-scored scan, five colour "signals" from a local
+ * heuristic, and an "illustrative haemoglobin interval" in g/dL. The heuristic
+ * has been deleted, and the haemoglobin interval went with it: this tool cannot
+ * measure haemoglobin, so it must not print a g/dL range anywhere.
+ *
+ * What replaces them is what the model actually produced:
+ *   - the CALIBRATED SCREENING PROBABILITY (0..1) as the headline, labelled as
+ *     a probability rather than a score or a confidence,
+ *   - the OPERATING THRESHOLD it was compared against, in context, because a
+ *     threshold of ≈0.2076 is the only reason a probability of 0.25 reads as
+ *     higher risk — it is tuned for sensitivity, not a 50% coin flip,
+ *   - `uncertain` as a first-class outcome with its own voice, never collapsed
+ *     into a middle "moderate" band,
+ *   - both candidate probabilities and the disagreement / near-threshold flags,
+ *   - the fusion gate weights,
+ *   - the MEASURED capture quality, which genuinely varies scan to scan,
+ *   - what the ROI localiser found, and
+ *   - the provenance the backend has always returned and this screen has never
+ *     rendered: the commitment, the scan-id hash, the model hash and version,
+ *     and the on-chain anchor.
+ *
+ * The optional Gemini explanation is fetched after paint and the whole section
+ * stays hidden when the server says it is unavailable. No explanation text is
+ * ever generated here.
  *
  * Layout: single column at 390px, two columns from `lg`. Every animation is
  * gated on `prefers-reduced-motion`.
@@ -22,17 +46,23 @@ import {
   ClipboardCheck,
   Clock3,
   Copy,
-  Droplet,
+  Crosshair,
+  ExternalLink,
+  GitCompareArrows,
+  Hash,
   History,
   Info,
+  Layers,
+  Link2,
   RotateCcw,
+  Scale,
   Send,
   Share2,
   ShieldAlert,
-  Layers,
-  Link2,
+  ShieldQuestion,
   Sparkles,
   Stethoscope,
+  Sun,
   TriangleAlert,
 } from 'lucide-react'
 
@@ -45,8 +75,23 @@ import { Separator } from '@/components/ui/separator'
 import { Stat } from '@/components/ui/stat'
 import { Disclosure } from '@/src/components/disclosure'
 import { RiskGauge } from '@/src/components/risk-gauge'
-import { SignalBars, rankSignals } from '@/src/components/signal-bars'
-import { clamp, formatDateTime, formatRelativeTime } from '@/src/lib/format'
+import {
+  MeasureBars,
+  candidateRows,
+  distributionBudgetRow,
+  fusionGateRows,
+} from '@/src/components/signal-bars'
+import { fetchExplanation, type Explanation } from '@/src/lib/api'
+import { auth } from '@/src/lib/firebase'
+import {
+  clamp,
+  formatDateTime,
+  formatFixed,
+  formatPercent,
+  formatProbability,
+  formatRelativeTime,
+  humaniseKey,
+} from '@/src/lib/format'
 import {
   riskAdvice,
   riskClasses,
@@ -60,18 +105,21 @@ import type { ScanAnalysis } from '@/src/lib/types'
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** Below this, the capture is too uncertain to lean on. */
-const LOW_CONFIDENCE = 55
-
-/** Scale ends for the illustrative haemoglobin ruler, in g/dL. */
-const HB_MIN = 6
-const HB_MAX = 18
-const HB_TICKS = [8, 10, 12, 14, 16] as const
+/**
+ * Below this measured capture quality the screen leads with a "treat this as
+ * provisional" card.
+ *
+ * This is a PRESENTATION cutoff and nothing more. The server has its own
+ * accept/refuse gates — quality, ROI and in-distribution — and a capture that
+ * failed any of them never reaches this screen at all. Nothing here weakens or
+ * second-guesses those.
+ */
+const LOW_QUALITY = 55
 
 const CONFOUNDERS = [
   {
     title: 'Light colour',
-    body: 'Warm bulbs, screen light and coloured lamps shift white balance, and a shifted white balance shifts every colour reading. Bright, indirect daylight is the only condition this screen is tuned for.',
+    body: 'Warm bulbs, screen light and coloured lamps shift white balance, and a shifted white balance shifts every colour feature the model reads. Bright, indirect daylight is the condition the training images most resemble.',
   },
   {
     title: 'Camera processing',
@@ -83,7 +131,7 @@ const CONFOUNDERS = [
   },
   {
     title: 'Who you are',
-    body: 'This heuristic has no calibration for age, pregnancy, altitude, skin tone or chronic illness. Two people with identical haemoglobin can score differently, and that is a limitation, not a feature.',
+    body: 'The model has no calibration for age, pregnancy, altitude, skin tone or chronic illness, and it has never been validated against blood results outside its own training data. Two people with identical haemoglobin can score differently, and that is a limitation, not a feature.',
   },
 ] as const
 
@@ -92,35 +140,84 @@ const CONFOUNDERS = [
 /* -------------------------------------------------------------------------- */
 
 function buildSummary(analysis: ScanAnalysis): string {
-  const ranked = rankSignals(analysis.signals)
+  const model = analysis.modelOutput
   const lines: string[] = [
     'AnemiaScan — screening summary',
     formatDateTime(analysis.createdAt),
     '',
-    `Screening score: ${analysis.riskScore}/100 (${analysis.riskLevel})`,
-    `Capture confidence: ${analysis.confidence}/100`,
-    `Illustrative haemoglobin interval: ${analysis.hbRange.low.toFixed(1)}-${analysis.hbRange.high.toFixed(1)} g/dL (illustrative only, NOT a blood test)`,
-    `Capture quality: light ${analysis.quality.light}/100, focus ${analysis.quality.focus}/100, framing ${analysis.quality.framing}/100`,
+    `Decision: ${analysis.riskLevel}`,
+    `Calibrated screening probability: ${formatProbability(analysis.screeningProbability)} (${formatPercent(
+      analysis.screeningProbability,
+    )})`,
+    `Operating threshold: ${formatProbability(model.operatingThreshold)} — tuned for sensitivity, not a 50% midpoint`,
+    `Uncertainty margin: ±${formatProbability(model.uncertaintyMargin)}`,
+    `Measured capture quality: ${Math.round(analysis.captureQuality)}/100`,
   ]
 
-  if (ranked.length) {
-    lines.push('', 'Signals, ranked by contribution to the score:')
-    ranked.forEach((item, index) => {
-      const direction = item.highIsConcerning ? 'higher is concerning' : 'higher is reassuring'
+  const candidates = Object.entries(model.candidateProbabilities ?? {})
+  if (candidates.length) {
+    lines.push('', 'Candidate models:')
+    candidates.forEach(([key, probability]) => {
+      const threshold = model.candidateThresholds?.[key]
+      const selected = key === model.selectedModel ? ' [selected]' : ''
       lines.push(
-        `  ${index + 1}. ${item.signal.label}: ${item.signal.value}/100 (${direction}, weight ${Math.round(
-          item.signal.weight * 100,
-        )}%)`,
+        `  ${key}: ${formatProbability(Number(probability))}${
+          Number.isFinite(Number(threshold))
+            ? ` (its threshold ${formatProbability(Number(threshold))})`
+            : ''
+        }${selected}`,
       )
     })
+    lines.push(
+      `  Candidates disagreed: ${model.modelDisagreement ? 'yes' : 'no'}`,
+      `  Inside the uncertainty margin: ${model.nearThreshold ? 'yes' : 'no'}`,
+    )
+  }
+
+  const gates = Object.entries(model.fusionGateWeights ?? {})
+  if (gates.length) {
+    lines.push(
+      '',
+      `Fusion gate weights: ${gates
+        .map(([key, weight]) => `${key} ${formatPercent(Number(weight))}`)
+        .join(', ')}`,
+    )
+  }
+
+  if (analysis.roi) {
+    lines.push(
+      '',
+      `Conjunctiva located automatically: ${analysis.roi.located ? 'yes' : 'no'}`,
+      `Fraction of the frame identified as conjunctiva: ${formatPercent(analysis.roi.coverage, 2)}`,
+    )
   }
 
   lines.push(
     '',
-    'What this is: a screening aid that measures colour, saturation and texture in a photo of the inner lower eyelid.',
+    'Provenance:',
+    `  model: ${model.modelVersion || '—'} (selected candidate ${model.selectedModel || '—'})`,
+    `  model hash: ${analysis.modelHash ?? '—'}`,
+    `  commitment: ${analysis.commitment ?? '—'}`,
+    `  scan id hash: ${analysis.scanIdHash ?? '—'}`,
+    `  on-chain: ${
+      analysis.registeredOnChain
+        ? `registered${analysis.chainTxStatus ? ` (${analysis.chainTxStatus})` : ''}${
+            analysis.chainTxHash ? ` tx ${analysis.chainTxHash}` : ''
+          }`
+        : 'not registered'
+    }`,
+  )
+
+  if (analysis.isSynthetic) {
+    lines.push('', `DEMO RESULT — ${analysis.demoNotice || 'synthetic output, not a real model run.'}`)
+  }
+
+  lines.push(
+    '',
+    'What this is: a research screening model that scores a photo of the inner lower eyelid and returns a calibrated probability.',
     'What this is not: a diagnosis, a haemoglobin measurement, or a substitute for a blood test.',
-    'Only a haemoglobin (CBC) blood test can establish anaemia. Please discuss any concern with a clinician.',
-    'Scored by AnemiaScan’s AI model — the photo was analysed in memory and never stored.',
+    'The model has no external clinical validation and no regulatory clearance. Only a haemoglobin (CBC) blood test can establish anaemia. Please discuss any concern with a clinician.',
+    'The photo was uploaded to the AnemiaScan server for analysis; a signed-in account is required to run a scan.',
   )
 
   return lines.join('\n')
@@ -138,38 +235,40 @@ function isAbortError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { name?: string }).name === 'AbortError'
 }
 
+/**
+ * The current Firebase ID token, or null.
+ *
+ * The explainer endpoint is authenticated like every other inference route, so
+ * the token is read here rather than threaded down as a prop — App.tsx already
+ * owns the auth listener and this screen only ever needs a fresh token at the
+ * moment it asks.
+ */
+async function currentIdToken(): Promise<string | null> {
+  const user = auth?.currentUser
+  if (!user) return null
+  try {
+    return await user.getIdToken()
+  } catch {
+    return null
+  }
+}
+
 /* -------------------------------------------------------------------------- */
-/* Illustrative haemoglobin ruler                                             */
+/* Provenance row                                                             */
 /* -------------------------------------------------------------------------- */
 
-function HbRuler({ low, high, fill }: { low: number; high: number; fill: string }) {
-  const span = HB_MAX - HB_MIN
-  const start = clamp(((low - HB_MIN) / span) * 100, 0, 100)
-  const end = clamp(((high - HB_MIN) / span) * 100, 0, 100)
-  const width = Math.max(2.5, end - start)
-
+function ProvenanceRow({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
-    <div aria-hidden="true" className="flex flex-col gap-1.5">
-      <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted">
-        {HB_TICKS.map((tick) => (
-          <span
-            key={tick}
-            className="absolute top-0 h-full w-px bg-background/80"
-            style={{ left: `${((tick - HB_MIN) / span) * 100}%` }}
-          />
-        ))}
-        <span
-          className={cn('absolute top-0 h-full rounded-full opacity-90', fill)}
-          style={{ left: `${start}%`, width: `${width}%` }}
-        />
-      </div>
-      <div className="flex justify-between text-[0.625rem] text-muted-foreground tabular-nums">
-        <span>{HB_MIN}</span>
-        {HB_TICKS.map((tick) => (
-          <span key={tick}>{tick}</span>
-        ))}
-        <span>{HB_MAX}</span>
-      </div>
+    <div className="flex flex-col gap-1">
+      <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+        {label}
+      </dt>
+      <dd className="flex flex-col gap-0.5">
+        <code className="font-mono text-[0.6875rem] leading-relaxed break-all text-foreground">
+          {value}
+        </code>
+        {note ? <span className="text-2xs leading-relaxed text-muted-foreground">{note}</span> : null}
+      </dd>
     </div>
   )
 }
@@ -197,19 +296,53 @@ export function ResultScreen({
   onSendToDoctor,
 }: ResultScreenProps) {
   const reduceMotion = useReducedMotion() ?? false
+  const model = analysis.modelOutput
   const token = riskColorToken(analysis.riskLevel)
   const tone = riskClasses(token)
   const advice = riskAdvice(analysis.riskLevel)
 
-  const ranked = useMemo(() => rankSignals(analysis.signals), [analysis.signals])
-  const topSignals = useMemo(() => ranked.slice(0, 3).map((item) => item.signal), [ranked])
-  const summary = useMemo(() => buildSummary(analysis), [analysis])
+  const probability = clamp(analysis.screeningProbability, 0, 1)
+  const threshold = clamp(model.operatingThreshold, 0, 1)
+  const margin = clamp(model.uncertaintyMargin, 0, 1)
+  const distance = probability - threshold
+  const captureQuality = Math.round(clamp(analysis.captureQuality, 0, 100))
+  const lowQuality = captureQuality < LOW_QUALITY
+  const isUncertain = model.decision === 'uncertain'
 
-  const lowConfidence = analysis.confidence < LOW_CONFIDENCE
+  const summary = useMemo(() => buildSummary(analysis), [analysis])
+  const candidates = useMemo(() => candidateRows(model), [model])
+  const gateWeights = useMemo(() => fusionGateRows(model), [model])
+  const budgetRow = useMemo(
+    () => (analysis.gate ? distributionBudgetRow(analysis.gate) : null),
+    [analysis.gate],
+  )
+
   const [shareState, setShareState] = useState<ShareState>('idle')
   const manualRef = useRef<HTMLTextAreaElement | null>(null)
   const [patientLabel, setPatientLabel] = useState('')
   const [sentToDoctor, setSentToDoctor] = useState(false)
+  const [explanation, setExplanation] = useState<Explanation | null>(null)
+
+  /* The optional Gemini explainer. It describes an already-computed result and
+     can never change one, so it is fetched after paint and the whole section is
+     omitted when the server says it is unavailable. Nothing is written locally
+     to fill the gap. */
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const idToken = await currentIdToken()
+      const result = await fetchExplanation({
+        model,
+        qualityBps: analysis.qualityBps ?? Math.round(clamp(analysis.captureQuality, 0, 100) * 100),
+        roi: analysis.roi ?? null,
+        idToken,
+      })
+      if (!cancelled) setExplanation(result)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [model, analysis.qualityBps, analysis.captureQuality, analysis.roi])
 
   // transient confirmation; the manual fallback stays until dismissed
   useEffect(() => {
@@ -306,7 +439,13 @@ export function ResultScreen({
               transition={{ duration: reduceMotion ? 0 : 0.5, ease: 'easeOut' }}
               className="shrink-0"
             >
-              <RiskGauge score={analysis.riskScore} level={analysis.riskLevel} size={244} />
+              <RiskGauge
+                probability={probability}
+                threshold={threshold}
+                uncertaintyMargin={margin}
+                level={analysis.riskLevel}
+                size={244}
+              />
             </motion.div>
 
             <div className="flex min-w-0 flex-col gap-4 text-center lg:text-left">
@@ -314,6 +453,7 @@ export function ResultScreen({
                 <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-start">
                   <Badge variant={token}>{analysis.riskLevel}</Badge>
                   <Badge variant="outline">Screening only</Badge>
+                  {analysis.isSynthetic ? <Badge variant="moderate">Demo result</Badge> : null}
                 </div>
                 <h1 className="display text-display-sm text-foreground sm:text-display">
                   {riskHeadline(analysis.riskLevel)}
@@ -326,23 +466,23 @@ export function ResultScreen({
 
               <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card/70 p-3.5 text-left">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-medium text-foreground">
-                    Confidence in this capture
-                  </span>
+                  <span className="text-xs font-medium text-foreground">Capture quality</span>
                   <span className="metric text-sm font-semibold text-foreground">
-                    {analysis.confidence}
+                    {captureQuality}
                     <span className="text-2xs font-medium text-muted-foreground">/100</span>
                   </span>
                 </div>
                 <Progress
-                  value={analysis.confidence}
-                  tone={lowConfidence ? 'moderate' : 'primary'}
-                  label="Confidence in this capture"
+                  value={captureQuality}
+                  tone={lowQuality ? 'moderate' : 'primary'}
+                  label="Measured capture quality"
                   className="h-1.5"
                 />
                 <p className="text-2xs leading-relaxed text-muted-foreground">
-                  Confidence describes the photo, not your health: lighting, focus and framing decide
-                  how much the five signals are worth.
+                  Measured by the server from the frame’s brightness, sharpness, clipped pixels,
+                  how much conjunctiva it found and how close the capture sat to the training
+                  distribution. It describes the photograph, not your health — and it is not a
+                  confidence in the result.
                 </p>
               </div>
             </div>
@@ -352,14 +492,57 @@ export function ResultScreen({
 
       {/* ---- body -------------------------------------------------------- */}
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10 lg:px-10 lg:py-12">
-        {/* This h2 sits ABOVE the low-confidence card on purpose: CardTitle
-            renders an h3, so leaving the heading below it produced h1 -> h3 ->
-            h2 on exactly the branch a screen-reader user most needs to navigate
+        {/* This h2 sits ABOVE the warning cards on purpose: CardTitle renders an
+            h3, so leaving the heading below them produced h1 -> h3 -> h2 on
+            exactly the branch a screen-reader user most needs to navigate
             cleanly. */}
         <h2 className="sr-only">Your reading in detail</h2>
 
-        {/* low-confidence warning comes before anything interpretive */}
-        {lowConfidence ? (
+        {/* `uncertain` gets its own card, first, in its own voice. It is not a
+            middle band and it must never be presented as one. */}
+        {isUncertain ? (
+          <motion.div variants={sectionVariants} initial="hidden" animate="show">
+            <Card className="border-moderate/30 bg-moderate/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-moderate">
+                  <ShieldQuestion className="size-4" aria-hidden="true" />
+                  The model declined to call this one
+                </CardTitle>
+                <CardDescription>
+                  {model.nearThreshold && model.modelDisagreement
+                    ? `The probability landed inside the ±${formatProbability(
+                        margin,
+                      )} uncertainty margin around the threshold, and the two candidate models reached opposite conclusions about the same capture.`
+                    : model.modelDisagreement
+                      ? 'The two candidate models reached opposite conclusions about the same capture, each against its own threshold.'
+                      : `The probability landed inside the ±${formatProbability(
+                          margin,
+                        )} uncertainty margin around the operating threshold, which is too close to call.`}{' '}
+                  An inconclusive screen is not a negative result and it is not a positive one.
+                  Reading it as either would be the one mistake that matters here.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2.5">
+                <Button size="lg" onClick={onScanAgain} className="h-10 rounded-full px-4">
+                  <RotateCcw className="size-4" data-icon="inline-start" aria-hidden="true" />
+                  Try another capture
+                </Button>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={onViewInsights}
+                  className="h-10 rounded-full px-4"
+                >
+                  How the decision is made
+                  <ArrowRight className="size-4" data-icon="inline-end" aria-hidden="true" />
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ) : null}
+
+        {/* low capture quality comes before anything interpretive */}
+        {lowQuality ? (
           <motion.div variants={sectionVariants} initial="hidden" animate="show">
             <Card className="border-moderate/30 bg-moderate/5">
               <CardHeader>
@@ -368,9 +551,10 @@ export function ResultScreen({
                   Treat this result as provisional
                 </CardTitle>
                 <CardDescription>
-                  Confidence came out at {analysis.confidence}/100, which is low. At that level the
-                  score says more about the photo than about you — a dim, soft or off-centre frame
-                  flattens exactly the colour differences this screen depends on.
+                  Capture quality was measured at {captureQuality}/100, which is low. The server
+                  still accepted the frame, but a dim, soft or off-centre photograph flattens
+                  exactly the colour differences the model reads — so the result says more about
+                  the picture than it does about you.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2.5">
@@ -392,83 +576,287 @@ export function ResultScreen({
           </motion.div>
         ) : null}
 
+        {/* ---- the decision, in the open ------------------------------- */}
+        <motion.div variants={sectionVariants} initial="hidden" animate="show">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Scale className="size-4 text-primary" aria-hidden="true" />
+                Why this reading became “{analysis.riskLevel}”
+              </CardTitle>
+              <CardDescription>
+                One comparison decides the outcome: the calibrated probability against the
+                operating threshold, with an uncertainty margin either side of it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                    Calibrated probability
+                  </dt>
+                  <dd className={cn('metric text-xl font-semibold tabular-nums', tone.text)}>
+                    {formatProbability(probability)}
+                    <span className="pl-1.5 text-2xs font-medium text-muted-foreground">
+                      {formatPercent(probability)}
+                    </span>
+                  </dd>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                    Operating threshold
+                  </dt>
+                  <dd className="metric text-xl font-semibold text-foreground tabular-nums">
+                    {formatProbability(threshold)}
+                  </dd>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                    Uncertainty margin
+                  </dt>
+                  <dd className="metric text-xl font-semibold text-foreground tabular-nums">
+                    ±{formatProbability(margin)}
+                  </dd>
+                </div>
+              </dl>
+
+              <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
+                This capture scored {formatProbability(probability)}, which is{' '}
+                {formatProbability(Math.abs(distance))} {distance >= 0 ? 'above' : 'below'} the
+                threshold of {formatProbability(threshold)}.
+                That threshold is deliberately set far below 0.5. It is tuned for sensitivity —
+                the model is built to err towards flagging a capture that turns out to be fine
+                rather than staying quiet about one that is not — so a probability that looks
+                “low” next to a coin flip can still be a higher-risk decision. Calibration means
+                the number behaves like a probability on the data this model was fitted to; it is
+                not a percentage of how anaemic anyone is, and it is not a confidence score.
+              </p>
+
+              {model.nearThreshold || model.modelDisagreement ? (
+                <div className="flex flex-wrap gap-2">
+                  {model.nearThreshold ? (
+                    <Badge variant="moderate">
+                      <Info className="size-3" aria-hidden="true" />
+                      Inside the uncertainty margin
+                    </Badge>
+                  ) : null}
+                  {model.modelDisagreement ? (
+                    <Badge variant="moderate">
+                      <GitCompareArrows className="size-3" aria-hidden="true" />
+                      Candidate models disagreed
+                    </Badge>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <Separator />
+
+              <div className="flex flex-col gap-3">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Both candidates, each against its own threshold
+                </h3>
+                <MeasureBars
+                  rows={candidates}
+                  emptyLabel="The server reported no candidate probabilities for this scan."
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
         <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-          {/* ---- illustrative haemoglobin ------------------------------- */}
+          {/* ---- fusion gate weights ------------------------------------ */}
           <motion.div variants={sectionVariants} initial="hidden" animate="show">
             <Card className="h-full">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Droplet className="size-4 text-primary" aria-hidden="true" />
-                  Illustrative haemoglobin interval
+                  <Layers className="size-4 text-primary" aria-hidden="true" />
+                  Where the fusion head put its weight
                 </CardTitle>
                 <CardDescription>
-                  Where this score would sit on a haemoglobin scale, if the relationship held
-                  perfectly. It does not — this is an illustration of the band, not a measurement of
-                  your blood.
+                  The gated fusion candidate decides per image how much to lean on each of its
+                  three inputs. These shares sum to 100% and describe this capture only.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                <div className="flex items-end justify-between gap-3">
-                  <p className={cn('metric text-display-xs font-semibold', tone.text)}>
-                    {analysis.hbRange.low.toFixed(1)}
-                    <span className="px-1 text-muted-foreground">–</span>
-                    {analysis.hbRange.high.toFixed(1)}
-                    <span className="pl-1.5 text-xs font-medium text-muted-foreground">g/dL</span>
-                  </p>
-                  <Badge variant="outline">Not a lab value</Badge>
-                </div>
-
-                <HbRuler low={analysis.hbRange.low} high={analysis.hbRange.high} fill={tone.fill} />
-
-                <Separator />
-
-                <ul className="flex list-none flex-col gap-2">
-                  <li className="flex gap-2 text-xs leading-relaxed text-muted-foreground">
-                    <Info className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    The interval widens as capture confidence drops, because an uncertain photo
-                    honestly supports a wider range.
-                  </li>
-                  <li className="flex gap-2 text-xs leading-relaxed text-muted-foreground">
-                    <Stethoscope
-                      className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    A laboratory haemoglobin test costs little, takes minutes, and replaces every
-                    number on this screen with a real one.
-                  </li>
-                </ul>
+                <MeasureBars
+                  rows={gateWeights}
+                  emptyLabel="The server reported no fusion gate weights for this scan."
+                />
+                <p className="text-2xs leading-relaxed text-muted-foreground">
+                  A gate weight is an attention share inside one model. It says where the model
+                  looked — never what it found, and never anything about you.
+                </p>
               </CardContent>
             </Card>
           </motion.div>
 
-          {/* ---- top signals -------------------------------------------- */}
+          {/* ---- ROI ---------------------------------------------------- */}
           <motion.div variants={sectionVariants} initial="hidden" animate="show">
             <Card className="h-full">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="size-4 text-primary" aria-hidden="true" />
-                  What moved the score most
+                  <Crosshair className="size-4 text-primary" aria-hidden="true" />
+                  Finding the conjunctiva
                 </CardTitle>
                 <CardDescription>
-                  The three strongest contributors of the five measured signals. Tap a row for the
-                  plain-language reading.
+                  The model was fitted on masked conjunctiva segmentations, so the server locates
+                  and masks that tissue before scoring anything. A frame with no plausible region
+                  is refused rather than scored.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                <SignalBars signals={topSignals} />
-                <Button
-                  variant="outline"
-                  size="lg"
-                  onClick={onViewInsights}
-                  className="h-10 w-full rounded-full"
-                >
-                  All five signals and the model card
-                  <ArrowRight className="size-4" data-icon="inline-end" aria-hidden="true" />
-                </Button>
+                {analysis.roi ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={analysis.roi.located ? 'safe' : 'moderate'}>
+                        {analysis.roi.located ? 'Located automatically' : 'Not located'}
+                      </Badge>
+                      <Badge variant="outline">{analysis.roi.method}</Badge>
+                    </div>
+                    <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                      <div className="flex flex-col gap-0.5">
+                        <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                          Frame identified as conjunctiva
+                        </dt>
+                        <dd className="metric text-lg font-semibold text-foreground tabular-nums">
+                          {formatPercent(analysis.roi.coverage, 2)}
+                        </dd>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                          Masked out of the crop
+                        </dt>
+                        <dd className="metric text-lg font-semibold text-foreground tabular-nums">
+                          {formatPercent(analysis.roi.maskedFraction, 2)}
+                        </dd>
+                      </div>
+                      {analysis.roi.sourceSize.length === 2 ? (
+                        <div className="flex flex-col gap-0.5">
+                          <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                            Submitted frame
+                          </dt>
+                          <dd className="text-sm text-foreground tabular-nums">
+                            {analysis.roi.sourceSize[0]} × {analysis.roi.sourceSize[1]} px
+                          </dd>
+                        </div>
+                      ) : null}
+                      {analysis.roi.roiSize.length === 2 ? (
+                        <div className="flex flex-col gap-0.5">
+                          <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                            Region passed to the model
+                          </dt>
+                          <dd className="text-sm text-foreground tabular-nums">
+                            {analysis.roi.roiSize[0]} × {analysis.roi.roiSize[1]} px
+                          </dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                    <p className="text-2xs leading-relaxed text-muted-foreground">
+                      Tissue is selected on redness-over-yellowness — the colour axis haemoglobin
+                      actually drives — with the threshold derived from the training set’s own
+                      statistics rather than hand-picked. Coverage is the share of the whole
+                      submitted frame, so a tightly cropped eyelid legitimately reads low.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    This scan carries no ROI report, so there is nothing to show here. Nothing is
+                    inferred in its place.
+                  </p>
+                )}
               </CardContent>
             </Card>
           </motion.div>
         </div>
+
+        {/* ---- measured capture quality, in detail --------------------- */}
+        {analysis.quality || budgetRow ? (
+          <motion.div variants={sectionVariants} initial="hidden" animate="show">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sun className="size-4 text-primary" aria-hidden="true" />
+                  What the capture itself measured
+                </CardTitle>
+                <CardDescription>
+                  The raw figures behind the {captureQuality}/100 quality score, plus how far this
+                  frame sat from the data the model was fitted on.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-5">
+                {analysis.quality ? (
+                  <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                        Mean brightness
+                      </dt>
+                      <dd className="metric text-lg font-semibold text-foreground tabular-nums">
+                        {formatFixed(analysis.quality.brightness, 1)}
+                        <span className="pl-1 text-2xs font-medium text-muted-foreground">
+                          /255
+                        </span>
+                      </dd>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                        Sharpness
+                      </dt>
+                      <dd className="metric text-lg font-semibold text-foreground tabular-nums">
+                        {analysis.quality.blurVariance === null
+                          ? '—'
+                          : formatFixed(analysis.quality.blurVariance, 1)}
+                        <span className="pl-1 text-2xs font-medium text-muted-foreground">
+                          Laplacian variance
+                        </span>
+                      </dd>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-2xs font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                        Clipped pixels
+                      </dt>
+                      <dd className="metric text-lg font-semibold text-foreground tabular-nums">
+                        {analysis.quality.clippedFraction === null
+                          ? '—'
+                          : formatPercent(analysis.quality.clippedFraction, 2)}
+                      </dd>
+                    </div>
+                  </dl>
+                ) : null}
+
+                {budgetRow ? (
+                  <>
+                    {analysis.quality ? <Separator /> : null}
+                    <MeasureBars rows={[budgetRow]} />
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+          </motion.div>
+        ) : null}
+
+        {/* ---- optional Gemini explanation ---------------------------- */}
+        {explanation?.available && explanation.explanation ? (
+          <motion.div variants={sectionVariants} initial="hidden" animate="show">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="size-4 text-primary" aria-hidden="true" />
+                  A plain-language reading of this result
+                </CardTitle>
+                <CardDescription>
+                  Written by a language model from the figures above, after the decision was made.
+                  It explains the result; it cannot change it, and it is not medical advice.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-relaxed text-pretty whitespace-pre-line text-muted-foreground">
+                  {explanation.explanation}
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ) : null}
 
         {/* ---- next steps --------------------------------------------- */}
         <motion.div variants={sectionVariants} initial="hidden" animate="show">
@@ -479,8 +867,8 @@ export function ResultScreen({
                 Sensible next steps
               </CardTitle>
               <CardDescription>
-                General guidance for this band, not personal medical advice. Nothing here replaces a
-                clinician who can examine you.
+                General guidance for this outcome, not personal medical advice. Nothing here
+                replaces a clinician who can examine you.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -523,13 +911,13 @@ export function ResultScreen({
                   A screening signal, not a diagnosis
                 </h2>
                 <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
-                  AnemiaScan measures colour and texture in a photograph. It has no access to your
+                  AnemiaScan scores colour and texture in a photograph. It has no access to your
                   blood, no clinical validation, and no regulatory clearance of any kind. It cannot
                   confirm or rule out anaemia, it cannot tell you why a reading looks the way it
-                  does, and it must never be used to start, stop or change treatment. A low score is
-                  not reassurance if you feel unwell, and a high score is not a diagnosis if you
-                  feel fine — in both cases the next step is a conversation with a clinician and a
-                  haemoglobin blood test.
+                  does, and it must never be used to start, stop or change treatment. A low
+                  probability is not reassurance if you feel unwell, and a high one is not a
+                  diagnosis if you feel fine — in both cases the next step is a conversation with a
+                  clinician and a haemoglobin blood test.
                 </p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   Urgent symptoms — chest pain, fainting, breathlessness at rest, a racing heart or
@@ -548,13 +936,13 @@ export function ResultScreen({
           className="flex flex-col gap-3"
         >
           <Disclosure label="Why does an eyelid photo say anything at all?">
-            AnemiaScan looks at colour signals in the palpebral conjunctiva — the moist lining
-            inside your lower eyelid. It is one of the few places where a blood-rich membrane sits
-            directly under a thin, unpigmented surface, so its colour tracks perfusion rather than
-            skin tone. As haemoglobin falls, that tissue trends from a deep pink-red toward pale
-            pink. This scan measures how far your capture sits from the saturated end of that range,
-            alongside vascular detail and exposure quality. It is a colour statistic, computed on
-            your device, and it is not a blood test.
+            The model reads the palpebral conjunctiva — the moist lining inside your lower eyelid.
+            It is one of the few places where a blood-rich membrane sits directly under a thin,
+            unpigmented surface, so its colour tracks perfusion rather than skin tone. As
+            haemoglobin falls, that tissue trends from a deep pink-red toward pale pink. The server
+            locates and masks that tissue, then two image encoders and a set of engineered colour
+            statistics are combined into a single calibrated probability. It is a statistical
+            reading of a photograph, and it is not a blood test.
           </Disclosure>
 
           <Disclosure label="What could skew this result?">
@@ -568,34 +956,112 @@ export function ResultScreen({
             </ul>
           </Disclosure>
 
+          <Disclosure label="Where did my photo go?">
+            The photo was uploaded to the AnemiaScan server over an encrypted connection and
+            scored there — this is not on-device analysis, and a signed-in account is required to
+            run a scan. The server holds the image in memory for the length of one request and
+            never writes it to disk; what it keeps is the numeric result and a hash commitment.
+            The copy of the photo shown in your history lives in this browser, on this device, and
+            is removed when you clear your history.
+          </Disclosure>
+
           {analysis.demoNotice ? (
-            <Disclosure label="Model & privacy">{analysis.demoNotice}</Disclosure>
+            <Disclosure label="Model & demo notice">{analysis.demoNotice}</Disclosure>
           ) : null}
         </motion.div>
 
-        {/* ---- on-chain registration, when the backend anchored this scan --- */}
-        {analysis.registeredOnChain && analysis.explorerUrl ? (
+        {/* ---- provenance --------------------------------------------- */}
+        <motion.section
+          variants={sectionVariants}
+          initial="hidden"
+          animate="show"
+          aria-labelledby="result-provenance-heading"
+        >
+          <Card>
+            <CardHeader>
+              <CardTitle id="result-provenance-heading" className="flex items-center gap-2">
+                <Hash className="size-4 text-primary" aria-hidden="true" />
+                Provenance
+              </CardTitle>
+              <CardDescription>
+                Which model produced this result, and the hashes that let it be checked later
+                without anyone having to reveal the photograph.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-5">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">{model.modelVersion || 'model version unknown'}</Badge>
+                <Badge variant="outline">
+                  Candidate: {model.selectedModel ? humaniseKey(model.selectedModel) : '—'}
+                </Badge>
+                {analysis.isSynthetic ? <Badge variant="moderate">Synthetic / demo</Badge> : null}
+              </div>
+
+              <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+                {analysis.modelHash ? (
+                  <ProvenanceRow
+                    label="Model hash"
+                    value={analysis.modelHash}
+                    note="A keccak hash of the weights manifest — every checkpoint, scaler and threshold file the runtime loads. Change one byte of one file and this value changes, so it cannot be faked by relabelling a model."
+                  />
+                ) : null}
+                {analysis.commitment ? (
+                  <ProvenanceRow
+                    label="Commitment"
+                    value={analysis.commitment}
+                    note="A hash binding this result to its inputs. It can be verified later without exposing the image or the result itself."
+                  />
+                ) : null}
+                {analysis.scanIdHash ? (
+                  <ProvenanceRow
+                    label="Scan ID hash"
+                    value={analysis.scanIdHash}
+                    note="The identifier this screening is recorded under."
+                  />
+                ) : null}
+                {analysis.chainTxHash ? (
+                  <ProvenanceRow label="Transaction" value={analysis.chainTxHash} />
+                ) : null}
+              </dl>
+            </CardContent>
+          </Card>
+        </motion.section>
+
+        {/* ---- on-chain registration ----------------------------------
+            Shown whenever the backend says it registered the commitment. This
+            card used to be gated on `explorerUrl` as well, so a scan that was
+            genuinely anchored on a chain with no configured explorer silently
+            claimed nothing had happened. The link is the optional part, not the
+            registration. */}
+        {analysis.registeredOnChain ? (
           <motion.div variants={sectionVariants} initial="hidden" animate="show">
             <Card className="border-primary/25 bg-primary/5">
               <CardContent className="flex flex-wrap items-center justify-between gap-3 py-5">
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-semibold text-foreground">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Link2 className="size-4 text-primary" aria-hidden="true" />
                     Screening commitment anchored on-chain
                   </p>
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     A hash of this screening was registered so the result can later be verified
                     without exposing the underlying image.
                     {analysis.chainTxStatus ? ` Status: ${analysis.chainTxStatus}.` : ''}
+                    {!analysis.explorerUrl
+                      ? ' No block explorer is configured for this network, so there is no link to follow.'
+                      : ''}
                   </p>
                 </div>
-                <a
-                  href={analysis.explorerUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm font-medium text-primary underline-offset-2 hover:underline"
-                >
-                  View on explorer →
-                </a>
+                {analysis.explorerUrl ? (
+                  <a
+                    href={analysis.explorerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ring-focus inline-flex items-center gap-1.5 rounded-full text-sm font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    View on explorer
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                ) : null}
               </CardContent>
             </Card>
           </motion.div>
@@ -616,7 +1082,7 @@ export function ResultScreen({
           <div className="grid gap-3 sm:grid-cols-2">
             <Button size="lg" onClick={onViewInsights} className="h-12 rounded-full px-5 text-base">
               <Layers className="size-4" data-icon="inline-start" aria-hidden="true" />
-              View signal insights
+              How the model works
             </Button>
             <Button
               variant="outline"
@@ -692,7 +1158,7 @@ export function ResultScreen({
                 <textarea
                   ref={manualRef}
                   readOnly
-                  rows={10}
+                  rows={12}
                   value={summary}
                   aria-label="Screening summary text"
                   className="ring-focus w-full resize-y rounded-xl border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground"
@@ -756,29 +1222,29 @@ export function ResultScreen({
 
           <div className="grid gap-3 sm:grid-cols-3">
             <Stat
-              label="Score"
-              value={`${analysis.riskScore}/100`}
-              hint="Higher means more anaemia-like signals"
+              label="Probability"
+              value={formatProbability(probability)}
+              hint="Calibrated, on a 0–1 scale. Not a score and not a confidence."
             />
             <Stat
-              label="Confidence"
-              value={`${analysis.confidence}/100`}
-              hint="Quality of this capture, not of your health"
+              label="Threshold"
+              value={formatProbability(threshold)}
+              hint={`Sensitivity-tuned decision boundary, ±${formatProbability(margin)} margin`}
             />
             <Stat
-              label="Signals measured"
-              value={`${analysis.signals.length}`}
-              hint="Colour, saturation, texture and exposure"
+              label="Capture quality"
+              value={`${captureQuality}/100`}
+              hint="Measured from this photograph, not from your health"
             />
           </div>
 
           <p className="text-2xs leading-relaxed text-muted-foreground">
-            Your photo is analysed securely and never stored — only the score is kept. History
-            stays in this browser, and a free account is required to use AnemiaScan.
+            Your photo was uploaded to the AnemiaScan server for analysis, held in memory for the
+            length of the request and not written to disk. A free account is required to run a
+            scan. The result and the photo shown in your history are stored in this browser only.
           </p>
         </motion.section>
       </div>
     </div>
   )
 }
-

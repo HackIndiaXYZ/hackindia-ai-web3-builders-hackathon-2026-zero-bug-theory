@@ -57,7 +57,7 @@ class ScanSession(Base):
     model_hash: Mapped[str] = mapped_column(String(66), nullable=False)
     risk_code: Mapped[int] = mapped_column(Integer, nullable=False)
     recommendation_code: Mapped[int] = mapped_column(Integer, nullable=False)
-    confidence_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    probability_bps: Mapped[int] = mapped_column(Integer, nullable=False)
     quality_bps: Mapped[int] = mapped_column(Integer, nullable=False)
     consent_hash: Mapped[str] = mapped_column(String(66), nullable=False)
     captured_at: Mapped[int] = mapped_column(Integer, nullable=False)  # unix seconds, matches uint64 on-chain

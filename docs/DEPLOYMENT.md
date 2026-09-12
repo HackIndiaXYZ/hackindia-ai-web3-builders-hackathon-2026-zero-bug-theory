@@ -4,9 +4,14 @@ This documents the MST Blockchain integration built into `contracts/`,
 `backend/`, and `sdk/`. It supersedes assumptions in any prior planning
 document (including `deep-research-report.md`, which was written before
 this code existed and got several concrete details wrong — see
-"Corrections to the original plan" below). Nothing under `src/` was
-touched; the existing frontend continues to work unmodified while its own
-UI work is in progress.
+"Corrections to the original plan" below).
+
+**This document was written during the pass that added `contracts/`,
+`backend/` and `sdk/`, when `src/` was deliberately untouched. That is no
+longer true**: the patient-facing UI now calls the backend, uploads the
+photograph, and requires sign-in. Sections describing the old boundary have
+been corrected in place rather than deleted, so the history stays readable.
+For what the model is and is not, see [`../MODEL_CARD.md`](../MODEL_CARD.md).
 
 ## What's real vs. mocked
 
@@ -18,19 +23,37 @@ UI work is in progress.
 | Commitment hash (`ANEMIASCAN_SCREENING_COMMITMENT_V1`) | Real, three-way verified (Solidity ground truth ↔ Python ↔ TypeScript) |
 | FastAPI backend, SQLAlchemy models | Real |
 | MST chain reads/writes | Real — end-to-end tested against a live EVM chain (see "Verification log") |
-| AI risk/recommendation scoring | **Synthetic.** No trained model exists yet. Every result carries `is_synthetic=True` and must show the DEMO MODE notice: *"DEMO MODE — AI model integration pending. This result is synthetic and must not be interpreted medically."* |
-| Sponsor/clinic wallet signing | **Backend-custodial for this build**, not BridgeKey-signed — see "Scope boundary: no UI changes" |
+| AI risk/recommendation scoring | **Real** by default (`INFERENCE_PROVIDER=real`): the AnemiaScan V3.1 calibrated ensemble in `backend/app/ml/`, with a conjunctiva localiser and in-distribution gates added here. `INFERENCE_PROVIDER=mock` still selects the deterministic synthetic provider for CI/offline dev; its results carry `is_synthetic=True` and must show the DEMO MODE notice: *"DEMO MODE — AI model integration pending. This result is synthetic and must not be interpreted medically."* |
+| The model's measured accuracy | **Unknown.** Real weights, real code, no validated performance: the training data, the split and the deployed candidate's metrics are not in this repository and could not be verified. Read [`../MODEL_CARD.md`](../MODEL_CARD.md) §8 before quoting any number anywhere |
+| Patient-facing UI wiring (`/scan`, `/result`, …) | Real — the browser uploads the capture to `POST /inference/predict` with a Firebase ID token and renders what the server returns |
+| Sponsor/clinic wallet signing | **Backend-custodial for this build**, not BridgeKey-signed — see "Scope boundary" |
 
-## Scope boundary: no UI changes
+## Scope boundary (corrected)
 
-This pass deliberately touches nothing under `src/` (the frontend is being
-actively worked on elsewhere). Everything here is additive: three new
+**Original boundary, now superseded.** The pass that created this document
+deliberately touched nothing under `src/`; everything was additive — three new
 top-level directories (`contracts/`, `backend/`, `sdk/`), each a
 self-contained project with its own dependencies, isolated from the root
-Vite/pnpm app. Confirmed with a full `pnpm run build` after every change
-(see "Non-breaking-changes check" below).
+Vite/pnpm app.
 
-One consequence: `CarePool.createPool` / `fundPool` (sponsor) and
+**What changed.** The frontend now calls the backend. Concretely:
+
+- `src/lib/api.ts` posts the captured photo to `POST /inference/predict` as
+  `multipart/form-data` with an `Authorization: Bearer <Firebase ID token>`
+  header, and surfaces the `422` recapture contract as a typed error.
+- **The browser no longer computes any medical risk.** The old five-signal
+  colour heuristic in `src/lib/analyze.ts` is gone; every risk number now comes
+  from the server's gated model.
+- **The photo is uploaded and sign-in is required.** Any copy claiming
+  on-device processing, that nothing is uploaded, that scanning works offline,
+  or that no account is needed is false and must be removed.
+- The illustrative haemoglobin interval is removed everywhere. The tool cannot
+  measure haemoglobin and must never print a g/dL range.
+
+`backend/` and `contracts/` are still separate project trees with their own
+dependency installs; the root `pnpm` app does not build or test them.
+
+One consequence of the custodial-signing shortcut remains: `CarePool.createPool` / `fundPool` (sponsor) and
 `redeemCarePass` (clinic) are meant, long-term, to be signed client-side by
 BridgeKey-connected wallets — that's inherently frontend work. For now the
 backend signs all of these with its own held keys (`MST_ISSUER_PRIVATE_KEY`
@@ -140,8 +163,8 @@ keccak256(abi.encode(
   modelHash,
   riskCode,             // uint8
   recommendationCode,   // uint8
-  confidenceBps,        // uint16
-  qualityBps,            // uint16
+  probabilityBps,       // uint16 — the calibrated probability, not a confidence
+  qualityBps,            // uint16 — measured capture quality, no longer a constant
   consentHash,
   capturedAt,            // uint64
   salt
@@ -166,18 +189,35 @@ and re-run both checks after any change to the encoding.
 | Never on MST or in the database | On MST | In the database only |
 |---|---|---|
 | Raw eye image | Screening commitment | `image_digest`, `consent_hash` (hashes, not the underlying data) |
-| Patient name / phone / email | Model hash | Risk/recommendation codes, confidence/quality bps |
+| Patient name / phone / email | Model hash | Risk/recommendation codes, probability/quality bps |
+| Firebase uid of the signed-in user | | (deliberately not stored with the screening) |
 | Raw risk label as free text | Consent hash | CarePass redemption secret (bearer-credential-sensitive — see `backend/app/carepass.py`) |
 | Hb value / CBC report | `scanIdHash` | Audit event log |
 | Raw consent document | CarePool state | Wallet auth nonces |
 | | CarePass hash/state | |
 | | Wallet addresses, tx history | | |
 
-Enforced independently at three layers: the Pydantic schemas
-(`backend/app/schemas.py` — no field for any of the left-hand column
-exists), the Solidity ABI (the contracts have no field for it either), and
-by construction (the backend never receives a raw image, only a
-client-computed digest).
+Enforced at two layers: the Pydantic schemas (`backend/app/schemas.py` — no
+field for any of the left-hand column exists) and the Solidity ABI (the
+contracts have no field for it either).
+
+**Correction — the image is uploaded now.** An earlier version of this
+document claimed a third layer: "by construction, the backend never receives a
+raw image, only a client-computed digest." That is no longer true and must not
+be repeated anywhere in the product. The model runs server-side, so the browser
+posts the photograph itself to `POST /inference/predict`. What is still true,
+and is the actual boundary:
+
+- the upload is held in memory for the duration of one request and is **never
+  written to disk**; only its digest is persisted;
+- the request requires a verified Firebase ID token, so the endpoint is not
+  open to anonymous callers;
+- the Firebase uid authorises the call and is **not** persisted with the
+  screening row, so scan records stay unlinked from identity;
+- nothing in the left-hand column above reaches the database or the chain.
+
+Any UI copy claiming on-device processing, "nothing is uploaded", offline
+scanning, or "no account needed" is false and must be removed.
 
 ## Deploying for real
 
@@ -202,40 +242,75 @@ To go from here to a real, judge-verifiable MST Testnet deployment:
    ```
 3. `npm run deploy:testnet` — deploys both contracts, writes
    `contracts/deployments.json`, prints the addresses for `backend/.env`.
-4. `npm run grant-roles:testnet` — registers the mock model, prints its
-   hash for `backend/.env`.
-5. Fill in `backend/.env`: the two contract addresses, the mock model
-   hash, and `MST_ATTESTER_PRIVATE_KEY` /
-   `MST_ISSUER_PRIVATE_KEY` / `MST_CLINIC_PRIVATE_KEY` (all can reuse
-   `contracts/.env.local`'s `PRIVATE_KEY` for a single-key hackathon demo —
-   that key already holds every role from the constructor).
-6. Start the backend (`backend/README.md`) and hit `GET /health` — it
-   confirms the live chain ID matches before you do anything else.
-7. `POST /registry/screenings` for the first real
-   `registerScreening()` transaction; note the `explorer_url` it returns.
+4. `npm run grant-roles:testnet` — grants the roles and registers the **mock**
+   model, printing its hash for `backend/.env`.
+5. **`npm run register-model:testnet` — register the real, weights-derived
+   model hash.** This step is required, not optional: `grantRoles.ts` registers
+   only `MOCK_MODEL_HASH`, and `registerScreening` reverts with `ModelNotFound`
+   for any hash that was never registered. With the shipped
+   `INFERENCE_PROVIDER=real`, skipping it means the first genuine screening
+   broadcasts a transaction that reverts on-chain and loses the anchor for a
+   result the user has already been shown.
 
-## Non-breaking-changes check
+   The hash is not hardcoded anywhere — it is derived from the installed
+   weights. From `backend/`, with the bundle in place:
+
+   ```bash
+   python -m app.ml.manifest --json ../contracts/model-manifest.json
+   ```
+
+   then from `contracts/`, `npm run register-model:testnet`. The script
+   re-derives `keccak256(canonical_text)` and refuses to register a manifest
+   whose stated `model_hash` disagrees, so a hand-edited file fails loudly
+   instead of anchoring a hash no running model can reproduce. Check the
+   result against [`../MODEL_CARD.md`](../MODEL_CARD.md) §7, which records the
+   same digests.
+6. Fill in `backend/.env`: the two contract addresses, the mock model
+   hash, `FIREBASE_PROJECT_ID` (**must equal the frontend's
+   `VITE_FIREBASE_PROJECT_ID`**, or every screening is rejected with 401), and
+   `MST_ATTESTER_PRIVATE_KEY` / `MST_ISSUER_PRIVATE_KEY` /
+   `MST_CLINIC_PRIVATE_KEY` (all can reuse `contracts/.env.local`'s
+   `PRIVATE_KEY` for a single-key hackathon demo — that key already holds every
+   role from the constructor). Leave `REQUIRE_AUTH=true` and
+   `REQUIRE_REGISTERED_MODEL=true`.
+7. Start the backend (`backend/README.md`) and hit `GET /health` — it
+   confirms the live chain ID matches before you do anything else. Then
+   `GET /inference/model` to confirm the loaded model hash is the one you
+   registered in step 5.
+8. `POST /inference/predict`, with a Firebase ID token, for the first real
+   `registerScreening()` transaction; note the `explorer_url` it returns.
+   (`POST /registry/screenings` is the deprecated alias for the same thing.)
+
+## Project isolation
 
 ```bash
-pnpm run build   # from the repo root — unaffected; contracts/, backend/, sdk/ are isolated project trees
+pnpm run build   # from the repo root — builds src/ only; contracts/, backend/, sdk/ are isolated project trees
 ```
 
-Confirmed passing after this work. `contracts/` and `sdk/ts/` use `npm`
-(their own `node_modules`, gitignored) specifically so `pnpm-workspace.yaml`
-at the root — which has no `packages:` glob, so it isn't actually a
-multi-package pnpm workspace — never picks them up. `backend/` is a
-separate Python project (own `.venv`, gitignored).
+`contracts/` and `sdk/ts/` use `npm` (their own `node_modules`, gitignored)
+specifically so `pnpm-workspace.yaml` at the root — which has no `packages:`
+glob, so it isn't actually a multi-package pnpm workspace — never picks them
+up. `backend/` is a separate Python project (own `.venv`, gitignored). So a
+root build still neither builds nor tests any of them; `src/` changes are now
+real changes to the app and must be built and reviewed as such.
 
 ## What's deliberately out of scope here
 
-- **BridgeKey / client-side wallet signing** — inherently frontend work;
-  see "Scope boundary" above. `/auth/challenge` + `/auth/verify` are ready
-  for it.
+- **BridgeKey / client-side wallet signing** — sponsor and clinic actions are
+  still signed by backend-held keys; see "Scope boundary" above.
+  `/auth/challenge` + `/auth/verify` are ready for it.
 - **Postgres + Alembic** — `backend/app/db.py` documents the swap
   (`DATABASE_URL`, same SQLAlchemy models); not wired up because SQLite +
   `create_all()` is enough for a hackathon build that isn't shipping to
   production, and Alembic migration authoring wasn't worth the time
   against everything else in this pass.
-- **Patient-facing UI wiring** (`/scan`, `/result`, `/proof`, `/verify`
-  routes calling this API) — not started, per the "no UI changes" scope
-  boundary for this pass.
+- **Clinical validation of the model.** The largest gap in the whole build, and
+  the one that matters most: nothing here establishes that the model works.
+  See [`../MODEL_CARD.md`](../MODEL_CARD.md) §8–§9 for exactly what is missing
+  and what would be needed.
+- **Independent ROI-localiser evaluation.** `backend/app/ml/roi.py` has never
+  been measured against annotated conjunctiva masks, because none exist here.
+
+Patient-facing UI wiring (`/scan`, `/result`, `/proof`, `/verify` calling this
+API) is **no longer out of scope** — it is wired up; see "Scope boundary
+(corrected)" above.

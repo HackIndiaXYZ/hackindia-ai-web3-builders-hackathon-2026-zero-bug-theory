@@ -1,0 +1,37 @@
+{
+  "schema": "ANEMIASCAN_MODEL_MANIFEST_V1",
+  "files": [
+    {
+      "path": "anemiafusionnet_v3_1_gated.pth",
+      "sha256": "9d79f6895e62a88b205d00ce762baab3372513d7e44549d295f2b6dc422f61dc",
+      "bytes": 2228149
+    },
+    {
+      "path": "base_models/convnext_tiny_best.pth",
+      "sha256": "bab72ce32214c2467f42a2ae160b466ae648e2d876730ca200e33cfa3befefde",
+      "bytes": 111340831
+    },
+    {
+      "path": "base_models/efficientnet_b3_best.pth",
+      "sha256": "ecc634d155874e0918ea4a69619529afd8884abb2d7cd26fb5afe3e08c615065",
+      "bytes": 44893933
+    },
+    {
+      "path": "runtime_config.json",
+      "sha256": "def0d460107d1ac1170c7cbbe42562f12e7669ffd8315ff37f6b307e49fa9fdd",
+      "bytes": 763
+    },
+    {
+      "path": "stacking_model.joblib",
+      "sha256": "031369214deda7cf8d39ba3a8d5d3eecb5e880e877d12bd3dd75dc4bdab01169",
+      "bytes": 2353
+    },
+    {
+      "path": "train_only_scalers.npz",
+      "sha256": "9518077ee855d206c5cf3e3c0d88081ac407ca3fc201404a66843a6e7024353b",
+      "bytes": 1846
+    }
+  ],
+  "model_hash": "0xcf19f102b46fa64f7260836c426cd29c05f994331a2be0c67964456e5f018c4d",
+  "canonical_text": "ANEMIASCAN_MODEL_MANIFEST_V1\nanemiafusionnet_v3_1_gated.pth 9d79f6895e62a88b205d00ce762baab3372513d7e44549d295f2b6dc422f61dc 2228149\nbase_models/convnext_tiny_best.pth bab72ce32214c2467f42a2ae160b466ae648e2d876730ca200e33cfa3befefde 111340831\nbase_models/efficientnet_b3_best.pth ecc634d155874e0918ea4a69619529afd8884abb2d7cd26fb5afe3e08c615065 44893933\nruntime_config.json def0d460107d1ac1170c7cbbe42562f12e7669ffd8315ff37f6b307e49fa9fdd 763\nstacking_model.joblib 031369214deda7cf8d39ba3a8d5d3eecb5e880e877d12bd3dd75dc4bdab01169 2353\ntrain_only_scalers.npz 9518077ee855d206c5cf3e3c0d88081ac407ca3fc201404a66843a6e7024353b 1846\n"
+}

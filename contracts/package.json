@@ -11,6 +11,11 @@
     "deploy:mainnet": "hardhat run scripts/deploy.ts --network mainnet",
     "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
     "grant-roles:testnet": "hardhat run scripts/grantRoles.ts --network testnet",
+    "grant-roles:mainnet": "hardhat run scripts/grantRoles.ts --network mainnet",
+    "grant-roles:local": "hardhat run scripts/grantRoles.ts --network localhost",
+    "register-model:testnet": "hardhat run scripts/registerModel.ts --network testnet",
+    "register-model:mainnet": "hardhat run scripts/registerModel.ts --network mainnet",
+    "register-model:local": "hardhat run scripts/registerModel.ts --network localhost",
     "verify:testnet": "hardhat verify --network testnet",
     "vector": "hardhat run scripts/printCommitmentVector.ts --network hardhat",
     "clean": "hardhat clean"

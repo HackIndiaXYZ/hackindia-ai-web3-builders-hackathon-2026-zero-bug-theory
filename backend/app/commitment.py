@@ -27,7 +27,7 @@ _TYPES = [
     "bytes32",  # modelHash
     "uint8",  # riskCode
     "uint8",  # recommendationCode
-    "uint16",  # confidenceBps
+    "uint16",  # probabilityBps
     "uint16",  # qualityBps
     "bytes32",  # consentHash
     "uint64",  # capturedAt
@@ -56,7 +56,7 @@ def build_screening_commitment(
     model_hash: str,
     risk_code: int,
     recommendation_code: int,
-    confidence_bps: int,
+    probability_bps: int,
     quality_bps: int,
     consent_hash: str,
     captured_at: int,
@@ -67,8 +67,8 @@ def build_screening_commitment(
         raise ValueError("riskCode must fit uint8")
     if not (0 <= recommendation_code <= 255):
         raise ValueError("recommendationCode must fit uint8")
-    if not (0 <= confidence_bps <= 65535):
-        raise ValueError("confidenceBps must fit uint16")
+    if not (0 <= probability_bps <= 65535):
+        raise ValueError("probabilityBps must fit uint16")
     if not (0 <= quality_bps <= 65535):
         raise ValueError("qualityBps must fit uint16")
     if not (0 <= captured_at <= 2**64 - 1):
@@ -83,7 +83,7 @@ def build_screening_commitment(
             _to_bytes32(model_hash),
             risk_code,
             recommendation_code,
-            confidence_bps,
+            probability_bps,
             quality_bps,
             _to_bytes32(consent_hash),
             captured_at,

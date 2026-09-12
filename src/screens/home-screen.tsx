@@ -47,7 +47,6 @@ import { Faq } from '@/src/components/faq'
 import { HeroShowcase } from '@/src/components/hero-showcase'
 import { TrustStrip } from '@/src/components/trust-strip'
 import { formatRelativeTime } from '@/src/lib/format'
-import { historyStats } from '@/src/lib/history'
 import { riskClasses, riskColorToken } from '@/src/lib/risk-style'
 import type { ScanAnalysis } from '@/src/lib/types'
 
@@ -55,10 +54,14 @@ import type { ScanAnalysis } from '@/src/lib/types'
 /* Static content                                                             */
 /* -------------------------------------------------------------------------- */
 
+/* Three claims that are true of the shipped system, not of a design deck.
+   "0 photos kept" is about our server specifically: the upload is scored in
+   memory and never written to disk. The copy your history keeps lives in this
+   browser, which the trust strip and the history screen both say outright. */
 const HERO_FACTS = [
   { icon: Clock, value: '~30s', label: 'per scan' },
-  { icon: Gauge, value: '5', label: 'signals read' },
-  { icon: ShieldCheck, value: '0', label: 'photos stored' },
+  { icon: Gauge, value: '2', label: 'CNNs in the ensemble' },
+  { icon: ShieldCheck, value: '0', label: 'photos kept on our server' },
 ] as const
 
 const STEPS = [
@@ -73,14 +76,14 @@ const STEPS = [
     index: '02',
     icon: ScanEye,
     title: 'Analyse',
-    body: 'The frame is sampled pixel by pixel on your device. Pallor, redness, saturation, vascular texture and illumination are each measured and normalised to a 0–100 reading.',
-    outcome: 'You see every signal and the weight it carries.',
+    body: 'The frame goes up over HTTPS. Our server locates the conjunctiva inside it, checks the crop is something the model can actually read, and scores it with a trained two-CNN ensemble.',
+    outcome: 'You see where the tissue was found and how readable it was.',
   },
   {
     index: '03',
     icon: ShieldCheck,
     title: 'Screen',
-    body: 'The readings blend into one score, one of three risk bands, and a confidence figure that falls when the capture is marginal. A frame that is too dark is refused, not fudged.',
+    body: 'You get back a calibrated screening probability, a measured capture-quality score, and one of three outcomes — lower risk, higher risk, or uncertain. A frame the model cannot read is refused with a reason, not fudged.',
     outcome: 'You get something specific to take to a clinician.',
   },
 ] as const
@@ -145,10 +148,20 @@ function LastScanBand({
   onViewHistory: () => void
 }) {
   const latest = history[0]
-  const stats = historyStats(history)
   const token = riskColorToken(latest.riskLevel)
   const tone = riskClasses(token)
-  const improving = stats.trend < 0
+
+  /* Summarised here rather than through historyStats(): the headline number is
+     now the server's calibrated probability, shown as a percentage, and not the
+     0–100 "screening score" the deleted local heuristic used to emit. */
+  const percent = Math.round(latest.screeningProbability * 100)
+  const meanPercent = (scans: ScanAnalysis[]) =>
+    Math.round(
+      (scans.reduce((sum, scan) => sum + scan.screeningProbability, 0) / scans.length) * 100,
+    )
+  const earlier = history.slice(1)
+  const trend = earlier.length ? percent - meanPercent(earlier) : 0
+  const improving = trend < 0
 
   return (
     <Card className="card-hover overflow-hidden">
@@ -169,39 +182,37 @@ function LastScanBand({
           <div className="flex min-w-0 flex-col gap-3">
             <div className="flex items-baseline gap-2.5">
               <span className={cn('metric text-display-lg leading-none', tone.text)}>
-                {Math.round(latest.riskScore)}
+                {percent}%
               </span>
-              <span className="text-sm text-muted-foreground">/ 100 screening score</span>
+              <span className="text-sm text-muted-foreground">screening probability</span>
             </div>
             <Progress
-              value={latest.riskScore}
+              value={percent}
               tone={token}
-              label={`Screening score ${Math.round(latest.riskScore)} out of 100`}
+              label={`Screening probability ${percent} percent`}
             />
-            {/* The g/dL figure is deliberately NOT printed here. On the result
-                screen it carries a title, a "Not a lab value" badge and a full
-                description; dropped into a metrics row next to two genuine
-                measurements it reads as a measured value with the caveat
-                trailing. The card links straight through to the fenced version. */}
+            {/* No haemoglobin figure is printed here, or anywhere else in the
+                app. This tool photographs tissue through an unknown camera; a
+                g/dL interval would be an invented number wearing a caveat. */}
             <p className="text-xs text-muted-foreground">
-              Captured {formatRelativeTime(latest.createdAt)} ·{' '}
-              {Math.round(latest.confidence)}% confidence · illustrative haemoglobin band only,
-              not a measurement
+              Captured {formatRelativeTime(latest.createdAt)} · capture quality{' '}
+              {Math.round(latest.captureQuality)}/100 · how anaemia-like the photo looked, not a
+              measurement of your blood
             </p>
           </div>
 
           <div className="flex shrink-0 flex-wrap gap-x-8 gap-y-4 sm:justify-end">
-            <Stat label="Scans kept" value={String(stats.count)} />
-            <Stat label="Average" value={String(stats.average)} hint="across all scans" />
+            <Stat label="Scans kept" value={String(history.length)} />
+            <Stat label="Average" value={`${meanPercent(history)}%`} hint="across all scans" />
             <Stat
               label="Vs baseline"
-              value={`${stats.trend > 0 ? '+' : ''}${stats.trend}`}
+              value={`${trend > 0 ? '+' : ''}${trend}`}
               hint={
-                stats.trend === 0
+                trend === 0
                   ? 'holding steady'
                   : improving
-                    ? 'lower than before'
-                    : 'higher than before'
+                    ? 'points lower than before'
+                    : 'points higher than before'
               }
             />
           </div>
@@ -222,12 +233,12 @@ function LastScanBand({
             View history
           </Button>
           <span className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground">
-            {stats.trend === 0 ? null : improving ? (
+            {trend === 0 ? null : improving ? (
               <TrendingDown className="size-3.5 text-safe" aria-hidden="true" />
             ) : (
               <TrendingUp className="size-3.5 text-moderate" aria-hidden="true" />
             )}
-            {stats.count > 1
+            {history.length > 1
               ? 'A direction of travel is more meaningful than any single scan.'
               : 'Scan again in a few days to start a trend line.'}
           </span>
@@ -282,7 +293,7 @@ function FirstRunBand({ onStart, onLearn }: { onStart: () => void; onLearn: () =
             Read the guide first
           </Button>
           <span className="text-2xs text-muted-foreground">
-            Nothing is saved until you finish a scan.
+            A free account and a connection are needed to scan.
           </span>
         </div>
       </CardContent>
@@ -345,8 +356,9 @@ export function HomeScreen({ onStart, onViewHistory, onLearn, history }: HomeScr
               className="max-w-lg text-base leading-relaxed text-pretty text-muted-foreground sm:text-lg"
             >
               AnemiaScan reads the inside of your lower eyelid — the one place your capillaries show
-              through unpigmented tissue — and a real AI model turns its colour into a screening
-              score. Your photo is analysed securely in about half a minute and is never stored.
+              through unpigmented tissue — and a real AI model turns its colour into a calibrated
+              screening probability. Your photo goes up over HTTPS, is scored in memory in about
+              half a minute, and is never written to disk.
             </motion.p>
 
             <motion.div variants={item} className="flex flex-wrap items-center gap-3 pt-1">
@@ -450,8 +462,9 @@ export function HomeScreen({ onStart, onViewHistory, onLearn, history }: HomeScr
               Capture, analyse, screen
             </h2>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Just your camera and a free account. The whole sequence happens between opening the
-              camera and reading the result.
+              Your camera, a free account and a connection. The photo goes to our server, gets
+              scored and comes back — the whole sequence between opening the camera and reading
+              the result.
             </p>
           </div>
 

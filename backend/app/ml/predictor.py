@@ -27,12 +27,34 @@ from torchvision import transforms
 from torchvision.models import convnext_tiny, efficientnet_b3
 from torchvision.transforms import InterpolationMode
 
+from . import gate as gating
+from .roi import locate_conjunctiva
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 EPS = 1e-6
 
 MODEL_ASSETS_DIR = Path(__file__).resolve().parent / "model_assets"
+
+# Identifies the inference stack (weights + ROI localiser + gates) in every
+# API response and in the model card. Bump the suffix when any of those change.
+MODEL_VERSION = "anemiascan-v3.1+roi1+gate1"
+
+RESEARCH_WARNING = (
+    "Research screening result only; obtain a CBC/hemoglobin test and "
+    "professional evaluation for diagnosis."
+)
+
+# The four decisions the inference contract declares, mapped to the label the
+# UI shows. "uncertain" is a first-class outcome, not a synonym for moderate:
+# it means the calibrated probability sits within the uncertainty margin of the
+# operating threshold, or the two candidate models disagree.
+RISK_CATEGORY = {
+    "lower_risk": "Lower risk",
+    "higher_risk": "Higher risk",
+    "uncertain": "Uncertain",
+    "recapture_required": "Recapture required",
+}
 
 
 def strip_bad_png_iccp(raw):
@@ -115,11 +137,46 @@ def engineered_features(rgb):
     return result
 
 
-def quality_report(rgb):
+def quality_report(rgb, mask=None):
+    """Capture-quality gate.
+
+    `mask` restricts the brightness / blur / clipping statistics to the tissue
+    pixels of a segmented ROI. This matters because a masked ROI is
+    deliberately black outside the tissue, and counting that background as
+    "clipped" made the gate reject its own correctly-segmented output: after
+    padding a located lid strip to a square, ~79% of the canvas is black, which
+    sailed past the 0.80 severely_clipped limit and refused the palest (most
+    clinically important) captures. With no mask the behaviour is unchanged, so
+    the raw submitted frame is still gated exactly as before.
+    """
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    brightness = float(gray.mean())
-    blur = float(cv2.Laplacian(gray, cv2.CV_32F).var())
-    clipped = float(((gray <= 3) | (gray >= 252)).mean())
+    if mask is not None:
+        selected = np.asarray(mask).astype(bool)
+        if selected.shape != gray.shape:
+            selected = (
+                cv2.resize(
+                    selected.astype(np.uint8),
+                    (gray.shape[1], gray.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
+                ).astype(bool)
+            )
+        if not selected.any():
+            selected = np.ones_like(gray, dtype=bool)
+        values = gray[selected]
+        brightness = float(values.mean())
+        clipped = float(((values <= 3) | (values >= 252)).mean())
+        # Laplacian needs spatial context, so measure it on the tissue
+        # bounding box rather than on a scattered pixel selection.
+        ys, xs = np.nonzero(selected)
+        blur = float(
+            cv2.Laplacian(
+                gray[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1], cv2.CV_32F
+            ).var()
+        )
+    else:
+        brightness = float(gray.mean())
+        blur = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        clipped = float(((gray <= 3) | (gray >= 252)).mean())
     failures = []
     if min(rgb.shape[:2]) < 96:
         failures.append("roi_too_small")
@@ -290,6 +347,15 @@ class AnemiaScanV31Predictor:
         self.convnext = self._load_base("convnext_tiny")
         self.stacker = joblib.load(self.root / self.runtime["stacker_model"])
 
+        # The stacker's own StandardScaler was fitted on the 648 training
+        # samples, so its first two entries are the mean and sd of the two base
+        # logits over the training set. gate.check_encoders uses them to tell
+        # an in-range encoder output from one that has left the fitted manifold
+        # (uniform noise drives the EfficientNet logit to -3997, a z of -120).
+        stacker_scaler = self.stacker["scaler"]
+        self.logit_mean = np.asarray(stacker_scaler.mean_[:2], dtype=np.float64)
+        self.logit_scale = np.asarray(stacker_scaler.scale_[:2], dtype=np.float64)
+
         gated_checkpoint = torch.load(
             self.root / self.runtime["gated_model"],
             map_location="cpu",
@@ -321,17 +387,98 @@ class AnemiaScanV31Predictor:
         model.load_state_dict(checkpoint["state_dict"], strict=True)
         return model.float().to(self.device).eval()
 
+    @staticmethod
+    def _rejected(quality, roi_report, gate_report):
+        """A gate refused the image: return a reason, never a score."""
+        return {
+            "decision": "recapture_required",
+            "quality": quality,
+            "roi": roi_report.as_dict() if roi_report is not None else None,
+            "gate": gate_report.as_dict(),
+            "screening_probability": None,
+            "recapture_reasons": list(gate_report.failures),
+            "message": gate_report.message(),
+            "model_version": MODEL_VERSION,
+            "warning": (
+                "Input failed the conjunctiva plausibility / in-distribution "
+                "check. Do not return an anemia prediction."
+            ),
+        }
+
     @torch.inference_mode()
-    def predict_bytes(self, raw_bytes):
+    def predict_bytes(self, raw_bytes, *, localise=True):
+        """Score one in-memory image.
+
+        Pipeline order, matching the documented spec:
+          1. decode
+          2. capture-quality gate on the submitted frame
+          3. conjunctiva ROI localisation + masking (roi.py) -- the stage the
+             bundle README says is required for smartphone eye photographs
+          4. capture-quality gate on the located ROI
+          5. engineered features + train-only scaling
+          6. in-distribution gate on those features (gate.py)
+          7. base encoders, then an encoder-range gate
+          8. fusion, calibration, thresholded decision
+
+        Any gate can return `recapture_required` with a named reason. Set
+        `localise=False` only when the caller already holds a segmented ROI
+        (the CLI, and the gate unit tests).
+        """
         rgb = decode_rgb(raw_bytes)
         quality = quality_report(rgb)
         if not quality["accepted"]:
             return {
                 "decision": "recapture_required",
                 "quality": quality,
+                "roi": None,
+                "gate": None,
                 "screening_probability": None,
+                "recapture_reasons": list(quality["failures"]),
+                "message": gating.RECAPTURE_MESSAGES.get(
+                    quality["failures"][0], "Input quality failed. Please retake the scan."
+                ),
+                "model_version": MODEL_VERSION,
                 "warning": "Input quality failed. Do not return an anemia prediction.",
             }
+
+        if localise:
+            located, roi_report = locate_conjunctiva(rgb)
+            if located is None:
+                reasons = roi_report.failures or ["no_roi_detected"]
+                return {
+                    "decision": "recapture_required",
+                    "quality": quality,
+                    "roi": roi_report.as_dict(),
+                    "gate": None,
+                    "screening_probability": None,
+                    "recapture_reasons": list(reasons),
+                    "message": gating.RECAPTURE_MESSAGES.get(
+                        reasons[0], "No conjunctiva was found in that photo."
+                    ),
+                    "model_version": MODEL_VERSION,
+                    "warning": "No conjunctiva ROI located. Do not return an anemia prediction.",
+                }
+            rgb = located
+            # Measure ROI quality over tissue pixels only -- the background is
+            # black by design, and counting it as clipped would reject our own
+            # correctly-segmented output.
+            quality = quality_report(rgb, mask=roi_report.mask)
+            if not quality["accepted"]:
+                return {
+                    "decision": "recapture_required",
+                    "quality": quality,
+                    "roi": roi_report.as_dict(),
+                    "gate": None,
+                    "screening_probability": None,
+                    "recapture_reasons": list(quality["failures"]),
+                    "message": gating.RECAPTURE_MESSAGES.get(
+                        quality["failures"][0], "Input quality failed. Please retake the scan."
+                    ),
+                    "model_version": MODEL_VERSION,
+                    "warning": "Input quality failed. Do not return an anemia prediction.",
+                }
+        else:
+            roi_report = None
 
         image = Image.fromarray(rgb)
         b3_tensor = self.transform_b3(image).unsqueeze(0).to(self.device)
@@ -340,6 +487,15 @@ class AnemiaScanV31Predictor:
         feature_scaled = ((feature_raw - self.feature_mean) / self.feature_std).astype(
             np.float32
         )
+
+        # -- gate 6: is this plausibly a conjunctiva ROI at all? --------------
+        gate_report = gating.check_features(
+            feature_raw,
+            feature_scaled,
+            laplacian_variance=quality["blur_variance"],
+        )
+        if not gate_report.accepted:
+            return self._rejected(quality, roi_report, gate_report)
 
         eff_embedding = self.efficientnet.encode(b3_tensor)
         conv_embedding = self.convnext.encode(conv_tensor)
@@ -352,6 +508,19 @@ class AnemiaScanV31Predictor:
         ):
             raise RuntimeError("Base encoder produced NaN/Inf")
 
+        # -- gate 7: did the encoders stay inside their fitted range? --------
+        gate_report = gating.check_encoders(
+            gate_report,
+            efficientnet_logit=float(eff_logit.item()),
+            convnext_logit=float(conv_logit.item()),
+            efficientnet_absmax=float(eff_embedding.abs().max().item()),
+            convnext_absmax=float(conv_embedding.abs().max().item()),
+            logit_mean=self.logit_mean,
+            logit_scale=self.logit_scale,
+        )
+        if not gate_report.accepted:
+            return self._rejected(quality, roi_report, gate_report)
+
         stacker_input = np.concatenate(
             [
                 np.array([float(eff_logit.item()), float(conv_logit.item())]),
@@ -360,6 +529,14 @@ class AnemiaScanV31Predictor:
         ).reshape(1, -1)
         stacker_input = self.stacker["scaler"].transform(stacker_input)
         logistic_raw = self.stacker["model"].predict_proba(stacker_input)[:, 1]
+        # apply_calibration clips its input to [EPS, 1-EPS] before taking the
+        # logit, so a raw probability that has saturated to exactly 0.0 or 1.0
+        # emerges as a hard bound (0.00390 / 0.99751) rather than a meaningful
+        # value. Two completely different garbage inputs used to report the
+        # identical 0.9975 for this reason. Detect it and refuse instead.
+        raw_saturated = bool(
+            float(logistic_raw[0]) <= EPS or float(logistic_raw[0]) >= 1.0 - EPS
+        )
         logistic_probability = float(
             apply_calibration(
                 logistic_raw, self.calibration["logistic_stacker"]
@@ -407,29 +584,57 @@ class AnemiaScanV31Predictor:
         else:
             decision = "lower_risk"
 
+        # A saturated raw probability is not a confident answer, it is an
+        # unreadable one. Refuse rather than report a clipped bound.
+        if raw_saturated and selected_name == "logistic_stacker":
+            gate_report.failures.append("probability_saturated")
+            gate_report.accepted = False
+            return self._rejected(quality, roi_report, gate_report)
+
+        average_gates = dict(
+            zip(
+                ["efficientnet", "convnext", "colour_features"],
+                np.mean(gate_values, axis=0).astype(float).tolist(),
+            )
+        )
+        quality_bps = gating.quality_score_bps(
+            brightness=float(quality["brightness"]),
+            laplacian_variance=float(quality["blur_variance"]),
+            clipped_fraction=float(quality["clipped_fraction"]),
+            roi_coverage=(roi_report.coverage if roi_report is not None else 1.0),
+            distribution_budget=gate_report.distribution_budget,
+        )
+
         return {
             "decision": decision,
+            "risk_category": RISK_CATEGORY[decision],
             "screening_probability": selected_probability,
             "selected_model": selected_name,
             "operating_threshold": selected_threshold,
+            "uncertainty_margin": float(self.thresholds["uncertainty_margin"]),
             "candidate_probabilities": probabilities,
+            "candidate_thresholds": {
+                "logistic_stacker": float(self.thresholds["logistic_stacker"]),
+                "regularized_gated_fusion": float(
+                    self.thresholds["regularized_gated_fusion"]
+                ),
+            },
             "model_disagreement": bool(disagreement),
+            "near_threshold": bool(close),
             "quality": quality,
-            "average_gates": dict(
-                zip(
-                    ["efficientnet", "convnext", "colour_features"],
-                    np.mean(gate_values, axis=0).astype(float).tolist(),
-                )
-            ),
-            "warning": (
-                "Research screening result only; obtain a CBC/hemoglobin test and "
-                "professional evaluation for diagnosis."
-            ),
+            "quality_bps": quality_bps,
+            "roi": roi_report.as_dict() if roi_report is not None else None,
+            "gate": gate_report.as_dict(),
+            "average_gates": average_gates,
+            "fusion_gate_weights": average_gates,
+            "model_version": MODEL_VERSION,
+            "recapture_reasons": [],
+            "warning": RESEARCH_WARNING,
         }
 
-    def predict(self, roi_image_path):
+    def predict(self, roi_image_path, *, localise=True):
         """File-path convenience wrapper (CLI / debugging) around predict_bytes."""
-        return self.predict_bytes(Path(roi_image_path).read_bytes())
+        return self.predict_bytes(Path(roi_image_path).read_bytes(), localise=localise)
 
 
 @lru_cache
