@@ -30,6 +30,7 @@ import {
   Share2,
   ShieldAlert,
   Layers,
+  Link2,
   Sparkles,
   Stethoscope,
   TriangleAlert,
@@ -182,6 +183,7 @@ interface ResultScreenProps {
   onViewInsights: () => void
   onScanAgain: () => void
   onViewHistory: () => void
+  onViewBlockchain: () => void
   /** Routes this screening to the in-app doctor review queue (prototype). */
   onSendToDoctor: (patientLabel: string) => void
 }
@@ -191,6 +193,7 @@ export function ResultScreen({
   onViewInsights,
   onScanAgain,
   onViewHistory,
+  onViewBlockchain,
   onSendToDoctor,
 }: ResultScreenProps) {
   const reduceMotion = useReducedMotion() ?? false
@@ -626,6 +629,16 @@ export function ResultScreen({
             </Button>
           </div>
 
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={onViewBlockchain}
+            className="h-11 w-full rounded-full px-5"
+          >
+            <Link2 className="size-4" data-icon="inline-start" aria-hidden="true" />
+            View private blockchain proof & care options
+          </Button>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <Button
               variant="ghost"
@@ -768,3 +781,4 @@ export function ResultScreen({
     </div>
   )
 }
+

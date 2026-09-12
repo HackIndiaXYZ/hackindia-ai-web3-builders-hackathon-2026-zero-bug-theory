@@ -15,10 +15,12 @@ export type ScreenId =
   | 'scan'
   | 'processing'
   | 'result'
+
   | 'insights'
   | 'inconclusive'
   | 'history'
   | 'learn'
+  | 'blockchain'
   | 'doctor'
   | 'patient-auth'
   | 'patient-profile'
