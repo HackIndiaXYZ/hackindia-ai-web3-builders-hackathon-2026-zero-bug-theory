@@ -83,6 +83,9 @@ export function ResultScreen({
           <RotateCcw className="mr-1 h-4 w-4" data-icon="inline-start" />
           Scan Again
         </Button>
+        <Button size="lg" variant="outline" onClick={() => onSendToDoctor('Patient screening')} className="h-12 rounded-full px-6 text-base font-medium">
+          Send to doctor
+        </Button>
       </div>
 
       <div className="w-full max-w-xl rounded-2xl border border-border bg-card/50 p-5">

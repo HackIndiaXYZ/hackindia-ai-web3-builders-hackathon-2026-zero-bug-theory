@@ -12,14 +12,20 @@ export function AuthScreen({ onBack }: { onBack?: () => void }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const authenticate = async (event: FormEvent<HTMLFormElement>) => {
+  const switchMode = (nextMode: AuthMode) => {
+    setMode(nextMode)
+    setError('')
+  }
+
+  const handleEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!auth) return
-    setBusy(true)
+
     setError('')
+    setIsSigningIn(true)
+
     try {
       if (mode === 'signup') {
         const result = await createUserWithEmailAndPassword(auth, email, password)
@@ -28,23 +34,37 @@ export function AuthScreen({ onBack }: { onBack?: () => void }) {
         await signInWithEmailAndPassword(auth, email, password)
       }
     } catch (authError) {
-      const code = authError instanceof Error ? authError.message : ''
-      setError(code.includes('email-already-in-use') ? 'This email already has an account.' : code.includes('invalid-credential') ? 'The email or password is incorrect.' : 'Authentication failed. Check your details and try again.')
+      const errorCode = authError instanceof Error ? authError.message : ''
+      if (errorCode.includes('auth/invalid-credential')) {
+        setError('The email or password is incorrect.')
+      } else if (errorCode.includes('auth/email-already-in-use')) {
+        setError('An account already exists for this email. Try logging in.')
+      } else if (errorCode.includes('auth/weak-password')) {
+        setError('Use a password with at least 6 characters.')
+      } else {
+        setError('We could not complete authentication. Check your details and try again.')
+      }
     } finally {
-      setBusy(false)
+      setIsSigningIn(false)
     }
   }
 
-  const googleSignIn = async () => {
+  const handleGoogleSignIn = async () => {
     if (!auth) return
-    setBusy(true)
+
     setError('')
+    setIsSigningIn(true)
+
     try {
       await signInWithPopup(auth, googleProvider)
-    } catch {
-      setError('Google sign-in could not be completed.')
+    } catch (signInError) {
+      if (signInError instanceof Error && signInError.message.includes('popup-closed-by-user')) {
+        setError('The sign-in window was closed. Try again when you are ready.')
+      } else {
+        setError('We could not complete sign-in. Check your Firebase Auth settings and try again.')
+      }
     } finally {
-      setBusy(false)
+      setIsSigningIn(false)
     }
   }
 
