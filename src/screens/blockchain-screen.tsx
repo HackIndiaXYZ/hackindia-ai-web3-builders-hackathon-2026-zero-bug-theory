@@ -24,9 +24,12 @@ import {
   getClinicAuthorization,
   getOnChainPool,
   getScreeningProof,
+  requestWalletChallenge,
+  verifyWalletSignature,
   type BlockchainHealth,
   type OnChainPool,
   type ScreeningProof,
+  type WalletSession,
 } from '@/src/lib/api'
 import {
   connectMstWallet,
@@ -36,6 +39,7 @@ import {
   fundPoolFromWallet,
   mstTestnet,
   redeemCarePassFromWallet,
+  signWalletAuthenticationMessage,
 } from '@/src/lib/mst'
 import type { ScanAnalysis } from '@/src/lib/types'
 
@@ -110,6 +114,8 @@ export function BlockchainScreen({ analysis, onBack }: BlockchainScreenProps) {
   const [healthError, setHealthError] = useState('')
   const [wallet, setWallet] = useState('')
   const [connecting, setConnecting] = useState(false)
+  const [walletSession, setWalletSession] = useState<WalletSession | null>(null)
+  const [authenticating, setAuthenticating] = useState(false)
 
   useEffect(() => {
     void getBlockchainConfig().then(setHealth).catch((error: unknown) => setHealthError(error instanceof Error ? error.message : 'Blockchain status is unavailable.'))
@@ -124,6 +130,33 @@ export function BlockchainScreen({ analysis, onBack }: BlockchainScreenProps) {
     } finally {
       setConnecting(false)
     }
+  }
+
+  const authenticate = async () => {
+    setAuthenticating(true)
+    setHealthError('')
+    try {
+      const address = wallet || await connectMstWallet()
+      setWallet(address)
+      const challenge = await requestWalletChallenge(address)
+      const signature = await signWalletAuthenticationMessage(address, challenge.message)
+      const session = await verifyWalletSignature(address, signature)
+      setWallet(session.address)
+      setWalletSession(session)
+    } catch (error) {
+      setHealthError(error instanceof Error ? error.message : 'Wallet authentication failed.')
+    } finally {
+      setAuthenticating(false)
+    }
+  }
+
+  const selectWorkspace = (next: Workspace) => {
+    if (next !== 'proof' && !walletSession) {
+      setHealthError('Sign in with your wallet before using sponsor pools or clinic redemption.')
+      setWorkspace('proof')
+      return
+    }
+    setWorkspace(next)
   }
 
   return (
@@ -153,13 +186,21 @@ export function BlockchainScreen({ analysis, onBack }: BlockchainScreenProps) {
             ['sponsor', 'Sponsor pool', Landmark],
             ['clinic', 'Clinic redemption', Stethoscope],
           ] as const).map(([id, label, Icon]) => (
-            <button key={id} type="button" role="tab" aria-selected={workspace === id} onClick={() => setWorkspace(id)} className={cn('ring-focus flex min-w-max flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors', workspace === id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
+            <button key={id} type="button" role="tab" aria-selected={workspace === id} onClick={() => selectWorkspace(id)} className={cn('ring-focus flex min-w-max flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors', workspace === id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
               <Icon className="size-4" /> {label}
             </button>
           ))}
         </div>
 
         {healthError ? <p role="status" className="rounded-xl border border-moderate/25 bg-moderate/10 px-4 py-3 text-sm text-foreground">{healthError}</p> : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Wallet authentication</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{walletSession ? `Signed in as ${shortHash(walletSession.address, 6)}. Session expires in ${Math.ceil(walletSession.expiresInSeconds / 60)} minutes.` : 'Proof lookup is public. Sponsor and clinic actions require a one-time wallet signature.'}</p>
+          </div>
+          {walletSession ? <Badge variant="safe"><Check className="mr-1 size-3.5" /> Signed in</Badge> : <Button variant="outline" onClick={() => void authenticate()} disabled={authenticating} className="rounded-xl">{authenticating ? <LoaderCircle className="size-4 animate-spin" /> : <Wallet className="size-4" />} Sign in with wallet</Button>}
+        </div>
 
         {workspace === 'proof' ? <ProofWorkspace analysis={analysis} health={health} /> : null}
         {workspace === 'sponsor' ? <SponsorWorkspace health={health} wallet={wallet} connecting={connecting} onConnect={() => void connect()} /> : null}

@@ -50,6 +50,19 @@ export interface BlockchainTransactionStatus {
   blockNumber: number | null
 }
 
+/** Short-lived browser session issued after the wallet signs the API challenge. */
+export interface WalletSession {
+  token: string
+  address: string
+  role: 'wallet'
+  expiresInSeconds: number
+}
+
+interface WalletChallenge {
+  address: string
+  message: string
+}
+
 export class RecaptureRequiredError extends Error {
   constructor(
     public quality: unknown,
@@ -134,6 +147,35 @@ export async function getBlockchainConfig(): Promise<BlockchainHealth> {
     chainIdMatch: body.live_chain_id === body.chain_id,
     registryAddress: body.registry_address,
     carePoolAddress: body.care_pool_address,
+  }
+}
+
+/** Starts the backend's nonce-based wallet authentication flow. */
+export async function requestWalletChallenge(address: string): Promise<WalletChallenge> {
+  const response = await fetch(`${API_BASE_URL}/auth/challenge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address }),
+  })
+  const body = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(body?.detail || 'Could not start wallet authentication.')
+  return { address: body.address, message: body.message }
+}
+
+/** Exchanges a wallet signature for a short-lived backend session token. */
+export async function verifyWalletSignature(address: string, signature: string): Promise<WalletSession> {
+  const response = await fetch(`${API_BASE_URL}/auth/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address, signature }),
+  })
+  const body = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(body?.detail || 'Wallet signature could not be verified.')
+  return {
+    token: body.token,
+    address: body.address,
+    role: body.role,
+    expiresInSeconds: body.expires_in_seconds,
   }
 }
 

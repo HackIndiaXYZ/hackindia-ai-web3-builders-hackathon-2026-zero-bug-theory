@@ -99,6 +99,22 @@ export async function connectMstWallet(): Promise<Address> {
   return address
 }
 
+/**
+ * Signs the backend's human-readable nonce challenge. This is authentication
+ * only: the message states explicitly that it does not authorize a transfer
+ * or a contract transaction.
+ */
+export async function signWalletAuthenticationMessage(address: Address, message: string): Promise<Hex> {
+  const signature = await injectedProvider().request({
+    method: 'personal_sign',
+    params: [message, address],
+  })
+  if (typeof signature !== 'string' || !signature.startsWith('0x')) {
+    throw new Error('The wallet did not return a valid authentication signature.')
+  }
+  return signature as Hex
+}
+
 function contractAddress(value: string): Address {
   if (!isAddress(value)) throw new Error('The CarePool contract address is missing or invalid.')
   return value
