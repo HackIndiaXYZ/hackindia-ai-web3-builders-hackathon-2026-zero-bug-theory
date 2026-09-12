@@ -36,6 +36,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { cn } from '@/lib/utils'
 import { AuthScreen } from '@/src/components/auth-screen'
 import { BottomNav } from '@/src/components/bottom-nav'
+import { BlockchainScreen } from '@/src/screens/blockchain-screen'
 import { ConsentGate, hasAcknowledged } from '@/src/components/consent-gate'
 import { DoctorPortal } from '@/src/components/doctor-portal'
 import { InstallPrompt } from '@/src/components/install-prompt'
@@ -73,6 +74,7 @@ const SCREEN_IDS: ScreenId[] = [
   'inconclusive',
   'history',
   'learn',
+  'blockchain',
   'doctor',
 ]
 
@@ -87,7 +89,7 @@ const SCREEN_IDS: ScreenId[] = [
 const MIN_SCORABLE_CONFIDENCE = 25
 
 /** Only these are safe to land on from a cold URL — the rest need session state. */
-const DEEP_LINKABLE: ScreenId[] = ['home', 'learn', 'history']
+const DEEP_LINKABLE: ScreenId[] = ['home', 'learn', 'history', 'blockchain']
 
 /** Announced in the live region, and used as the document title suffix. */
 const SCREEN_TITLES: Record<ScreenId, string> = {
@@ -99,6 +101,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   inconclusive: 'Scan inconclusive',
   history: 'Scan history',
   learn: 'Learn about anaemia',
+  blockchain: 'Proof and care',
   doctor: 'Doctor portal',
 }
 
@@ -278,6 +281,7 @@ export default function App() {
   const goScan = useCallback(() => push('scan'), [push])
   const goHistory = useCallback(() => push('history'), [push])
   const goLearn = useCallback(() => push('learn'), [push])
+  const goBlockchain = useCallback(() => push('blockchain'), [push])
   const goDoctor = useCallback(() => push('doctor'), [push])
 
   const handleCaptured = useCallback(
@@ -392,6 +396,7 @@ export default function App() {
         <SiteHeader
           onHome={goHome}
           onLearn={goLearn}
+          onBlockchain={goBlockchain}
           onHistory={goHistory}
           onScan={goScan}
           onDoctorPortal={goDoctor}
@@ -422,6 +427,8 @@ export default function App() {
 
           {screen === 'learn' && <LearnScreen onBack={() => back('home')} onStart={goScan} />}
 
+          {screen === 'blockchain' && <BlockchainScreen analysis={analysis} onBack={() => back('home')} />}
+
           {screen === 'scan' && (
             <ScanScreen onCapture={handleCaptured} onExit={() => back('home')} />
           )}
@@ -449,6 +456,7 @@ export default function App() {
               onViewInsights={() => push('insights')}
               onScanAgain={goScan}
               onViewHistory={goHistory}
+              onViewBlockchain={goBlockchain}
               onSendToDoctor={sendToDoctor}
             />
           )}

@@ -19,6 +19,7 @@ export type ScreenId =
   | 'inconclusive'
   | 'history'
   | 'learn'
+  | 'blockchain'
   | 'doctor'
 
 /**
