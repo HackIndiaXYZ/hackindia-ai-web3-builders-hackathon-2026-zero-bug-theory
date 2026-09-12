@@ -35,3 +35,12 @@ Build the project for production:
 ```bash
 pnpm run build
 ```
+
+## MST Blockchain integration
+
+Smart contracts (`contracts/`), backend (`backend/`), and a shared
+commitment SDK (`sdk/`) live as separate, self-contained projects with
+their own dependencies — none of it touches this app's `src/` or its
+`pnpm` install. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the
+full architecture, what's been verified against the live MST Testnet, and
+deployment steps.
