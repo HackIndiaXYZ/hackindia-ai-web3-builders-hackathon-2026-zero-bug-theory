@@ -6,13 +6,15 @@ import { ProcessingScreen } from '@/src/screens/processing-screen'
 import { ResultScreen } from '@/src/screens/result-screen'
 import { InsightsScreen } from '@/src/screens/insights-screen'
 import { InconclusiveScreen } from '@/src/screens/inconclusive-screen'
-import type { ScanAnalysis, ScreenId } from '@/src/lib/types'
+import { DoctorPortal } from '@/src/components/doctor-portal'
+import type { DoctorReport, ScanAnalysis, ScreenId } from '@/src/lib/types'
 
 const IMMERSIVE_SCREENS: ScreenId[] = ['scan', 'processing']
 
 export default function App() {
   const [screen, setScreen] = useState<ScreenId>('home')
   const [analysis, setAnalysis] = useState<ScanAnalysis | null>(null)
+  const [reports, setReports] = useState<DoctorReport[]>([])
 
   const handleCaptured = useCallback((result: ScanAnalysis) => {
     setAnalysis(result)
@@ -24,11 +26,18 @@ export default function App() {
   }, [analysis])
 
   const goHome = useCallback(() => setScreen('home'), [])
-  const showHeader = !IMMERSIVE_SCREENS.includes(screen)
+  const sendToDoctor = useCallback((patientLabel: string) => {
+    if (!analysis) return
+    setReports((current) => [{ id: `R-${Date.now()}`, patientLabel, analysis: { ...analysis }, submittedAt: new Date().toISOString(), status: 'Awaiting Review' }, ...current])
+  }, [analysis])
+  const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string) => {
+    setReports((current) => current.map((report) => report.id === reportId ? { ...report, doctorAdvice, status: 'Reviewed', reviewedAt: new Date().toISOString() } : report))
+  }, [])
+  const showHeader = !IMMERSIVE_SCREENS.includes(screen) && screen !== 'doctor'
 
   return (
     <div className="flex min-h-dvh w-full flex-col bg-background">
-      {showHeader && <SiteHeader onHome={goHome} />}
+      {showHeader && <SiteHeader onHome={goHome} onDoctorPortal={() => setScreen('doctor')} />}
 
       <main className="flex flex-1 flex-col">
         {screen === 'home' && <HomeScreen onStart={() => setScreen('scan')} />}
@@ -46,6 +55,7 @@ export default function App() {
             analysis={analysis}
             onViewInsights={() => setScreen('insights')}
             onScanAgain={() => setScreen('scan')}
+            onSendToDoctor={sendToDoctor}
           />
         )}
 
@@ -56,6 +66,8 @@ export default function App() {
         {screen === 'inconclusive' && (
           <InconclusiveScreen onRetake={() => setScreen('scan')} onExit={goHome} />
         )}
+
+        {screen === 'doctor' && <DoctorPortal reports={reports} onBack={goHome} onSaveAdvice={saveDoctorAdvice} />}
       </main>
     </div>
   )
