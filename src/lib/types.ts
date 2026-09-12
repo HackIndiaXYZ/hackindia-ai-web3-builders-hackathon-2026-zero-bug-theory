@@ -20,6 +20,8 @@ export type ScreenId =
   | 'history'
   | 'learn'
   | 'doctor'
+  | 'patient-auth'
+  | 'patient-profile'
 
 /**
  * The three screening bands the heuristic reports. These are risk *bands*,
@@ -98,4 +100,11 @@ export interface DoctorReport {
   status: 'Awaiting Review' | 'Reviewed'
   doctorAdvice?: string
   reviewedAt?: string
+}
+
+export interface PatientProfile {
+  name: string
+  age: number
+  gender: string
+  medicalNotes?: string
 }
