@@ -26,27 +26,19 @@ export function riskColorToken(level: RiskLevel): RiskToken {
  */
 export function riskHeadline(level: RiskLevel): string {
   if (level === 'Elevated Risk') return 'Worth Getting Checked'
-  if (level === 'Moderate Risk') return 'Some Signals Stand Out'
-  return 'No Pallor Signal Today'
+  if (level === 'Moderate Risk') return 'Result Is Uncertain'
+  return 'Lower Screening Signal'
 }
 
-/**
- * One-paragraph, non-diagnostic explanation of the band.
- *
- * These never say "reference range" or "the usual range". That is laboratory
- * vocabulary, and there is no such range here: analyze.ts normalises against
- * hand-picked windows that have never been compared against a blood result. The
- * copy therefore talks about what THIS SCREEN treats as unremarkable, which is
- * the only claim the heuristic can actually support.
- */
+/** One-paragraph, non-diagnostic explanation of the calibrated V4 band. */
 export function riskExplanation(level: RiskLevel): string {
   if (level === 'Elevated Risk') {
-    return 'The conjunctiva in your photo looks paler and less vascular than the range this screen treats as unremarkable, a pattern often seen alongside lower haemoglobin. This is a screening signal only — a blood test is the only way to know your haemoglobin.'
+    return 'The calibrated V4 screening score is above its validation-selected operating threshold. This is a higher-risk screening signal, not proof of anaemia; only clinical evaluation and blood testing can determine your haemoglobin.'
   }
   if (level === 'Moderate Risk') {
-    return 'Most signals looked ordinary, but colour saturation and vascular detail sat below the range this screen treats as unremarkable. That can come from mild anaemia, but also from lighting, camera white balance or a slightly off-centre capture.'
+    return 'The calibrated V4 screening score falls within the configured uncertainty margin around its operating threshold. Retaking the image may help, but a CBC or haemoglobin test is the appropriate confirmation.'
   }
-  return 'Colour, saturation and vascular texture in this capture all sit in the range this screen treats as unremarkable. That is not a clean bill of health — mild anaemia often shows no visible pallor at all, so symptoms still matter more than this score.'
+  return 'The calibrated V4 screening score is below its operating threshold. This does not rule out anaemia or provide a clean bill of health; symptoms and professional evaluation still matter.'
 }
 
 /** Three to four concrete, safe next steps. */

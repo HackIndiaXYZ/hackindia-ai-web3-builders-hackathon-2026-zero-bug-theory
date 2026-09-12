@@ -134,10 +134,10 @@ interface SourceSquare {
  * The preview is `object-cover`, so the stream is scaled up until it covers the
  * element and then centred — most of a 16:9 stream's width is off-screen on a
  * phone. Cropping the centre square of the RAW frame therefore measures pixels
- * the user never saw (cheek, brow, background), which directly biases the
- * pallor, redness and saturation averages. This inverts that mapping so the
+ * the user never saw (cheek, brow, background), which would change the model
+ * input. This inverts that mapping so the
  * captured canvas IS the contents of the dashed box, which is what
- * EyeGuide promises and what analyze.ts's ROI then lines up with.
+ * EyeGuide promises and what the V4 endpoint receives.
  *
  * Returns null when the geometry is not measurable yet; the caller falls back
  * to the centre square.
@@ -198,8 +198,7 @@ function centreSquare(width: number, height: number): SourceSquare | null {
  *
  * Capping the output edge is what removes the allocation cliff: a 4032x3024
  * gallery photo would otherwise make `getImageData` allocate ~36MB and
- * `toDataURL` run over 12 megapixels, for a heuristic that only ever samples a
- * 96x96 grid. `mirrored` un-flips the front camera so the saved photo reads the
+ * `toDataURL` run over 12 megapixels. `mirrored` un-flips the front camera so the saved photo reads the
  * same way round as the preview the user framed in.
  */
 function drawAnalysisSquare(
@@ -261,6 +260,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
   const [autoCapture, setAutoCapture] = useState(true)
   const [helpOpen, setHelpOpen] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
+  const [pendingCapture, setPendingCapture] = useState<CapturedImage | null>(null)
 
   const ready = checks.light && checks.position && checks.clarity && checks.steady
 
@@ -505,7 +505,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
   /**
    * Put the screen back into a usable state after a capture that could not be
    * analysed, and say so. Without this, every early return below would leave
-   * the shutter permanently disabled with "Analysing on this device…" on screen
+   * the shutter permanently disabled with "Preparing preview…" on screen
    * and no way out but the X button.
    */
   const abortCapture = useCallback((message: string) => {
@@ -528,10 +528,9 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       try {
         const size = Math.min(canvas.width, canvas.height)
         if (size < 8) throw new Error('capture canvas is empty')
-        // The canvas already IS the region the user framed, at a capped
-        // resolution — this is handed to the real screening backend as-is
-        // (see src/lib/api.ts submitScreening), so no local analysis runs here.
-        const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        // The canvas already is the region the user framed; only this guided
+        // ROI is handed to the V4 backend.
+        const imageDataUrl = canvas.toDataURL('image/jpeg', 0.91)
         canvas.toBlob(
           (blob) => {
             if (!blob) {
@@ -542,16 +541,18 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
             // Release the camera only once the frame is safely captured; a
             // failed capture must leave a live preview to retry with.
             streamRef.current?.getTracks().forEach((track) => track.stop())
-            onCapture({ blob, imageDataUrl })
+            capturingRef.current = false
+            setCapturing(false)
+            setPendingCapture({ blob, imageDataUrl })
           },
           'image/jpeg',
-          0.85,
+          0.91,
         )
       } catch {
         abortCapture('That frame could not be prepared for upload. Try again.')
       }
     },
-    [onCapture, abortCapture],
+    [abortCapture],
   )
 
   const handleCapture = useCallback(() => {
@@ -594,7 +595,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
 
   /** Hold-still countdown. Cancels the moment any check drops out. */
   useEffect(() => {
-    if (mode !== 'camera' || !ready || !autoCapture || capturing || helpOpen) {
+    if (mode !== 'camera' || !ready || !autoCapture || capturing || helpOpen || pendingCapture) {
       setCountdown(null)
       return
     }
@@ -612,7 +613,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
       setCountdown(remaining)
     }, COUNTDOWN_STEP)
     return () => window.clearInterval(id)
-  }, [mode, ready, autoCapture, capturing, helpOpen])
+  }, [mode, ready, autoCapture, capturing, helpOpen, pendingCapture])
 
   /** Shutter flash. */
   useEffect(() => {
@@ -775,7 +776,7 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
    * still be mid-sentence when the shutter fires. The region carries one stable
    * instruction; the ticking digit is rendered aria-hidden next to the ring. */
   const coach = useMemo<{ text: string; tone: 'idle' | 'warn' | 'ready' }>(() => {
-    if (capturing) return { text: 'Captured. Analysing on this device…', tone: 'ready' }
+    if (capturing) return { text: 'Captured. Preparing preview…', tone: 'ready' }
     if (mode === 'loading') return { text: 'Starting the camera…', tone: 'idle' }
     if (mode === 'denied') return { text: 'Camera access is blocked', tone: 'warn' }
     if (mode === 'fallback') return { text: 'No camera stream available', tone: 'warn' }
@@ -835,6 +836,41 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
 
   const mirrored = facing === 'user'
   const showCameraUi = mode === 'camera' || mode === 'loading'
+
+  const replacePendingCapture = useCallback(() => {
+    setPendingCapture(null)
+    finishedRef.current = false
+    capturingRef.current = false
+    setCapturing(false)
+    setFlash(false)
+    setCountdown(null)
+    setFileError(null)
+    setAttempt((value) => value + 1)
+  }, [])
+
+  if (pendingCapture) {
+    return (
+      <div className="dark flex min-h-dvh flex-1 flex-col bg-[#05070a] px-5 py-8 text-white">
+        <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6">
+          <div className="flex flex-col gap-2 text-center">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-primary">Preview guided ROI</p>
+            <h1 className="text-2xl font-semibold tracking-tight">Use this lower-eyelid image?</h1>
+            <p className="text-sm leading-relaxed text-white/60">Check that the moist inner lower eyelid fills the square, is in focus, and has even colour without glare.</p>
+          </div>
+          <img src={pendingCapture.imageDataUrl} alt="Preview of the guided conjunctiva ROI ready for V4 screening" className="aspect-square w-full rounded-3xl border border-white/15 object-cover shadow-2xl" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={replacePendingCapture} className={cn(PILL_BUTTON, 'border border-white/15 bg-white/5 text-white hover:bg-white/10')}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />Replace image
+            </button>
+            <button type="button" onClick={() => onCapture(pendingCapture)} className={cn(PILL_BUTTON, 'bg-primary text-primary-foreground hover:bg-primary/90')}>
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />Use this ROI
+            </button>
+          </div>
+          <p className="text-center text-xs leading-relaxed text-white/55">Only this cropped ROI is sent to the V4 backend. It is processed transiently and is not a diagnosis.</p>
+        </div>
+      </div>
+    )
+  }
 
   /* ----------------------------------------------------------------------- */
   /* Render                                                                   */

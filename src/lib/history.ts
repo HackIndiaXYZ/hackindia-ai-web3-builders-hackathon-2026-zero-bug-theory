@@ -2,12 +2,12 @@ import type { RiskLevel, ScanAnalysis, SignalBreakdown, SignalKey } from '@/src/
 import { clamp } from '@/src/lib/format'
 
 /**
- * Local, offline scan history.
+ * Local scan history.
  *
- * Everything lives in localStorage under a single versioned key — no account, no
- * upload, no network. Photos are the expensive part, so only the newest few
- * entries keep their `imageDataUrl`; older entries keep their numbers and drop
- * the pixels, which keeps the whole store comfortably inside the ~5MB quota.
+ * Results live in localStorage under a single versioned key. V4 analysis itself
+ * uses the backend, but history persistence stays in this browser. Photos are
+ * the expensive part, so only the newest few entries keep their `imageDataUrl`;
+ * older entries keep their numbers and drop the pixels.
  *
  * Every storage touch is wrapped: a missing, corrupt, or unreadable value always
  * degrades to an empty history rather than throwing into a render.
@@ -40,9 +40,7 @@ function levelFromScore(score: number): RiskLevel {
 }
 
 /**
- * Coarse illustrative haemoglobin band, used only to repair a stored entry whose
- * own interval is missing or corrupt. Same (non-clinical) anchors the analyser
- * uses, just without the confidence-driven widening.
+ * Legacy fallback used only when repairing a pre-V4 stored entry.
  */
 function fallbackHbRange(level: RiskLevel): { low: number; high: number } {
   if (level === 'Elevated Risk') return { low: 7.5, high: 11 }
@@ -68,6 +66,56 @@ function reviveSignals(value: unknown, fallbackScore: number): SignalBreakdown[]
   return signals
 }
 
+function reviveV4(value: Record<string, unknown>): Partial<ScanAnalysis> {
+  const decisions = ['higher_risk', 'lower_risk', 'uncertain'] as const
+  const decision = value.decision
+  const probability = num(value.screeningProbability, -1)
+  const threshold = num(value.operatingThreshold, -1)
+  const modelQuality = isRecord(value.modelQuality) ? value.modelQuality : null
+  const benchmark = isRecord(value.internalBenchmark) ? value.internalBenchmark : null
+  const matrix = benchmark && isRecord(benchmark.confusionMatrix) ? benchmark.confusionMatrix : null
+  if (
+    value.modelVersion !== 'anemiascan-v4-eff-conv-vit' ||
+    typeof decision !== 'string' ||
+    !decisions.includes(decision as (typeof decisions)[number]) ||
+    probability < 0 || probability > 1 || threshold <= 0 || threshold >= 1 ||
+    !modelQuality || !benchmark || !matrix
+  ) return {}
+  return {
+    decision: decision as (typeof decisions)[number],
+    screeningProbability: probability,
+    operatingThreshold: threshold,
+    uncertain: decision === 'uncertain',
+    modelVersion: 'anemiascan-v4-eff-conv-vit',
+    modelHash: typeof value.modelHash === 'string' ? value.modelHash : undefined,
+    modelQuality: {
+      accepted: modelQuality.accepted === true,
+      brightness: clamp(num(modelQuality.brightness, 0), 0, 255),
+      blurVariance: Math.max(0, num(modelQuality.blurVariance, 0)),
+      clippedFraction: clamp(num(modelQuality.clippedFraction, 0), 0, 1),
+      failures: Array.isArray(modelQuality.failures)
+        ? modelQuality.failures.filter((failure): failure is string => typeof failure === 'string')
+        : [],
+    },
+    internalBenchmark: {
+      label: 'Internal development benchmark',
+      samples: Math.max(1, Math.round(num(benchmark.samples, 1))),
+      accuracy: clamp(num(benchmark.accuracy, 0), 0, 1),
+      sensitivity: clamp(num(benchmark.sensitivity, 0), 0, 1),
+      specificity: clamp(num(benchmark.specificity, 0), 0, 1),
+      auroc: clamp(num(benchmark.auroc, 0), 0, 1),
+      f1: clamp(num(benchmark.f1, 0), 0, 1),
+      confusionMatrix: {
+        tn: Math.max(0, Math.round(num(matrix.tn, 0))),
+        fp: Math.max(0, Math.round(num(matrix.fp, 0))),
+        fn: Math.max(0, Math.round(num(matrix.fn, 0))),
+        tp: Math.max(0, Math.round(num(matrix.tp, 0))),
+      },
+    },
+    warning: typeof value.warning === 'string' ? value.warning : undefined,
+  }
+}
+
 /**
  * Rebuild a stored record into a well-formed ScanAnalysis, repairing anything
  * missing. Returns null only when the record is too broken to be meaningful.
@@ -85,12 +133,15 @@ function reviveScan(value: unknown): ScanAnalysis | null {
       ? (storedLevel as RiskLevel)
       : levelFromScore(riskScore)
 
+  const v4 = reviveV4(value)
   const quality = isRecord(value.quality) ? value.quality : {}
   const storedHb = isRecord(value.hbRange) ? value.hbRange : {}
   const hbLow = clamp(num(storedHb.low, 0), 0, 25)
   const hbHigh = clamp(num(storedHb.high, 0), 0, 25)
   const hbRange =
-    hbLow > 0 && hbHigh > 0
+    v4.modelVersion === 'anemiascan-v4-eff-conv-vit'
+      ? { low: 0, high: 0 }
+      : hbLow > 0 && hbHigh > 0
       ? { low: Math.min(hbLow, hbHigh), high: Math.max(hbLow, hbHigh) }
       : fallbackHbRange(riskLevel)
 
@@ -113,6 +164,7 @@ function reviveScan(value: unknown): ScanAnalysis | null {
       focus: clamp(Math.round(num(quality.focus, 0)), 0, 100),
       framing: clamp(Math.round(num(quality.framing, 0)), 0, 100),
     },
+    ...v4,
   }
 }
 

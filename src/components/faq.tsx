@@ -7,7 +7,7 @@
  * never linger in the accessibility tree or take focus. Multiple panels may be
  * open at once, and a single control expands or collapses the whole set.
  *
- * Copy rule: every answer stays inside what an image heuristic can honestly
+ * Copy rule: every answer stays inside what a research image model can honestly
  * claim. No accuracy percentages, no citations, no regulatory language.
  * -------------------------------------------------------------------------- */
 
@@ -30,8 +30,8 @@ const ENTRIES: FaqEntry[] = [
     id: 'what-it-measures',
     question: 'What is AnemiaScan actually measuring?',
     answer: [
-      'It measures colour, not blood. When you capture your lower eyelid, the app reads the pixels of the exposed palpebral conjunctiva and scores five things: pallor (how washed-out the tissue looks), redness (how much of the signal sits in the red channel), colour saturation, vascular texture (how much fine detail is visible), and illumination.',
-      'Those five readings are blended into a single 0–100 screening score and mapped to one of three bands — Low, Moderate or Elevated. The haemoglobin range you see is an illustrative interval derived from that score, not a measurement of your blood.',
+      'It analyses an image, not blood. V4 generates one logit each from EfficientNet-B3, ConvNeXt-Tiny and ViT-B/16, then combines them with 32 standardized colour and texture features in a calibrated logistic stacker.',
+      'The calibrated probability is compared with a validation-selected threshold and uncertainty margin. It produces a lower-risk, higher-risk or uncertain screening result—not a haemoglobin measurement.',
     ],
   },
   {
@@ -46,8 +46,8 @@ const ENTRIES: FaqEntry[] = [
     id: 'accuracy',
     question: 'How accurate is it?',
     answer: [
-      'We will not give you a number, because an honest one does not exist for this build. AnemiaScan runs a transparent colour-and-texture heuristic, not a model validated against laboratory haemoglobin results in a clinical study. Eyelid-pallor screening is an active research area, and the published work in that area does not transfer to an unvalidated heuristic running on an unknown phone camera.',
-      'What the app does instead is show its work: every signal, its weight, and a confidence figure that drops when the capture quality drops. Treat a result as a prompt to get tested, never as a number to act on.',
+      'The V4 bundle includes an internal development benchmark, which the Insights screen labels and displays directly from metrics.json. It is not external clinical validation and may not generalize to new populations, cameras or capture conditions.',
+      'Treat every result as a prompt for appropriate testing, never as a number to diagnose from or act on by itself.',
     ],
   },
   {
@@ -62,7 +62,7 @@ const ENTRIES: FaqEntry[] = [
     id: 'privacy',
     question: 'Is my photo uploaded anywhere?',
     answer: [
-      'Yes — the captured photo is sent securely to AnemiaScan’s backend, where a real trained AI model analyses it in memory. The image is never written to disk or a database; only a sha256 hash of it and your coded result (risk band, confidence) are kept. Your browser also runs a supplementary colour and texture estimate locally, with no network call, purely for the Insights screen.',
+      'Yes — only the guided conjunctiva ROI is sent securely to AnemiaScan’s backend, where V4 analyses it in memory. The analysis endpoint does not write the image to disk or a database, and the browser does not calculate a fallback medical score.',
       'Scan history itself is stored in this browser only, using local storage, and the Clear history action removes it immediately. Using AnemiaScan does require a free account, but your history is not synced to it or shared with a third party.',
     ],
   },
@@ -86,8 +86,8 @@ const ENTRIES: FaqEntry[] = [
     id: 'limits',
     question: 'Who should not rely on this at all?',
     answer: [
-      'Anyone who is pregnant, an infant or young child, someone with a known blood disorder such as thalassaemia or sickle cell disease, anyone on dialysis or in cancer treatment, and anyone with an eye infection, conjunctivitis, recent eye injury or eye surgery. In all of those cases the tissue colour, the risk itself or both fall well outside what a generic heuristic can reason about.',
-      'The same goes for anyone acting on a result in place of care. This is a nudge toward a blood test, and it is only useful if the nudge leads to one.',
+      'Anyone who is pregnant, an infant or young child, someone with a known blood disorder such as thalassaemia or sickle cell disease, anyone on dialysis or in cancer treatment, and anyone with an eye infection, conjunctivitis, recent eye injury or eye surgery. Those situations can fall outside the model’s intended research context and need professional care.',
+      'The same goes for anyone acting on a result in place of care. This model is a research screening prototype and a nudge toward appropriate testing, not a substitute for it.',
     ],
   },
 ]

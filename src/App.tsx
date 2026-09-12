@@ -78,16 +78,6 @@ const SCREEN_IDS: ScreenId[] = [
   'doctor',
 ]
 
-/**
- * Below this confidence the capture is not worth scoring. `tooDark` in
- * src/lib/analyze.ts only catches an *under*-exposed frame; a blown-out or
- * badly framed one keeps tooDark = false yet lands in single-digit confidence,
- * where the score is noise. Showing "Elevated Risk 97" off a white frame would
- * be the single most misleading thing this app could do, so both cases route to
- * the inconclusive screen and neither is written to history.
- */
-const MIN_SCORABLE_CONFIDENCE = 25
-
 /** Only these are safe to land on from a cold URL — the rest need session state. */
 const DEEP_LINKABLE: ScreenId[] = ['home', 'learn', 'history', 'blockchain']
 
@@ -97,7 +87,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   scan: 'Camera',
   processing: 'Analysing your scan',
   result: 'Your screening result',
-  insights: 'Signal insights',
+  insights: 'V4 model insights',
   inconclusive: 'Scan inconclusive',
   history: 'Scan history',
   learn: 'Learn about anaemia',
@@ -293,20 +283,20 @@ export default function App() {
     [replace],
   )
 
-  /** ProcessingScreen has already submitted the frame to the real screening
-   *  backend (src/lib/api.ts) and merged the result onto the on-device
-   *  heuristic by the time this fires — see src/screens/processing-screen.tsx. */
+  /** ProcessingScreen has received and validated the deterministic V4 result. */
   const handleProcessingDone = useCallback(
     (result: ScanAnalysis) => {
       setAnalysis(result)
-      if (result.tooDark || result.confidence < MIN_SCORABLE_CONFIDENCE) {
-        // A rejected frame is never written to history.
-        setInconclusiveInfo({ reason: 'quality' })
-        replace('inconclusive')
-        return
-      }
       setHistory(saveScan(result))
       replace('result')
+    },
+    [replace],
+  )
+
+  const handleRecaptureRequired = useCallback(
+    (message: string) => {
+      setInconclusiveInfo({ reason: 'quality', message })
+      replace('inconclusive')
     },
     [replace],
   )
@@ -438,6 +428,7 @@ export default function App() {
               capture={capture}
               onDone={handleProcessingDone}
               onError={handleProcessingError}
+              onRecapture={handleRecaptureRequired}
             />
           )}
 

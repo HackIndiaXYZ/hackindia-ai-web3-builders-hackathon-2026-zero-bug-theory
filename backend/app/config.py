@@ -19,13 +19,14 @@ class Settings(BaseSettings):
     mst_care_pool_address: str = ""
     mst_mock_model_hash: str = ""
 
-    # "real" runs the AnemiaScan V3.1 calibrated bundle (app/ml/); "mock" uses
+    # "real" runs the AnemiaScan V4 calibrated bundle (app/ml/); "mock" uses
     # the deterministic synthetic provider and needs no model weights.
     inference_provider: str = "real"
     # Optional override for the real model's on-chain model_hash; empty
-    # falls back to inference.REAL_MODEL_HASH (a fixed, computed constant).
+    # falls back to the installed bundle's deterministic SHA-256 model hash.
     mst_real_model_hash: str = ""
-    ml_device: str = "cpu"
+    ml_device: str = "auto"
+    ml_max_upload_bytes: int = 52_428_800
 
     mst_attester_private_key: str = ""
     mst_issuer_private_key: str = ""
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
     session_secret: str = "dev-insecure-change-me"
     session_ttl_seconds: int = 3600
 
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"
 
     @property
     def cors_origin_list(self) -> list[str]:

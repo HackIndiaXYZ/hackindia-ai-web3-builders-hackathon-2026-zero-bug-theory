@@ -7,7 +7,6 @@ __pycache__/
 *.db-journal
 *.sqlite3
 
-# AnemiaScan V3.1 model weights (~150MB; base_models/convnext_tiny_best.pth
-# alone is 111MB, over GitHub's 100MB hard file limit). Never commit these —
-# see app/ml/model_assets/BUNDLE_README.md for how to obtain the bundle.
+# AnemiaScan V4 model weights (~500MB, including the ViT-B/16 checkpoint).
+# Never commit these; install the trusted local ZIP with the backend installer.
 app/ml/model_assets/

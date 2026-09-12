@@ -35,7 +35,7 @@ const POINTS = [
   {
     icon: ScanEye,
     title: 'What it does',
-    body: 'It measures colour and texture signals in a photo of your inner lower eyelid and turns them into an anaemia risk band with a confidence figure.',
+    body: 'It sends a guided photo of your inner lower eyelid to the calibrated V4 screening model and returns a screening score, risk band and uncertainty state.',
   },
   {
     icon: Lock,

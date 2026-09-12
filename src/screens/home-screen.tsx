@@ -57,7 +57,7 @@ import type { ScanAnalysis } from '@/src/lib/types'
 
 const HERO_FACTS = [
   { icon: Clock, value: '~30s', label: 'per scan' },
-  { icon: Gauge, value: '5', label: 'signals read' },
+  { icon: Gauge, value: '3', label: 'vision models' },
   { icon: ShieldCheck, value: '0', label: 'photos stored' },
 ] as const
 
@@ -73,15 +73,15 @@ const STEPS = [
     index: '02',
     icon: ScanEye,
     title: 'Analyse',
-    body: 'The frame is sampled pixel by pixel on your device. Pallor, redness, saturation, vascular texture and illumination are each measured and normalised to a 0–100 reading.',
-    outcome: 'You see every signal and the weight it carries.',
+    body: 'The guided ROI is sent to the V4 backend, where EfficientNet-B3, ConvNeXt-Tiny and ViT-B/16 logits are combined with 32 standardized colour and texture features.',
+    outcome: 'The trained calibrated stacker produces one screening score.',
   },
   {
     index: '03',
     icon: ShieldCheck,
     title: 'Screen',
-    body: 'The readings blend into one score, one of three risk bands, and a confidence figure that falls when the capture is marginal. A frame that is too dark is refused, not fudged.',
-    outcome: 'You get something specific to take to a clinician.',
+    body: 'The validation-selected threshold and uncertainty margin produce a lower-risk, higher-risk or uncertain result. Images that fail quality checks are refused rather than classified.',
+    outcome: 'You get a screening result to confirm with a clinician and CBC test.',
   },
 ] as const
 
@@ -184,9 +184,8 @@ function LastScanBand({
                 measurements it reads as a measured value with the caveat
                 trailing. The card links straight through to the fenced version. */}
             <p className="text-xs text-muted-foreground">
-              Captured {formatRelativeTime(latest.createdAt)} ·{' '}
-              {Math.round(latest.confidence)}% confidence · illustrative haemoglobin band only,
-              not a measurement
+              Captured {formatRelativeTime(latest.createdAt)} · calibrated screening score,
+              not diagnostic certainty
             </p>
           </div>
 
