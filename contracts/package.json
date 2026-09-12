@@ -1,0 +1,27 @@
+{
+  "name": "anemiascan-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AnemiaScan Proof-of-Care smart contracts for MST Blockchain (Testnet).",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network mainnet",
+    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "grant-roles:testnet": "hardhat run scripts/grantRoles.ts --network testnet",
+    "verify:testnet": "hardhat verify --network testnet",
+    "vector": "hardhat run scripts/printCommitmentVector.ts --network hardhat",
+    "clean": "hardhat clean"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "~5.0.2"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.10",
+    "typescript": "^5.5.4"
+  }
+}

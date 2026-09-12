@@ -1,0 +1,28 @@
+# Pinned, not just range-constrained, for the eth-* / web3 stack: web3 6.20.4
+# hard-requires eth-account<0.13 (only has SignedTransaction.rawTransaction),
+# while mst-sdk-python's own signer code assumes eth-account>=0.13's renamed
+# SignedTransaction.raw_transaction — letting pip's resolver pick eth-account
+# freely (as `eth-account<1.0` originally did here) silently reintroduces
+# that crash. See the app/chain.py module docstring and docs/DEPLOYMENT.md
+# for the full story and the compatibility shim that works around it.
+# Regenerate with `pip freeze` after any deliberate upgrade, then re-run the
+# full test suite (contracts + backend + sdk/ts) before trusting a new set.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
+
+mst-sdk-python==1.0.1
+web3==6.20.4
+eth-account==0.11.3
+eth-abi==5.2.0
+eth-utils==4.1.1
+eth-typing==4.4.0
+hexbytes==0.3.1
+ckzg==1.0.2
+
+pytest==8.4.2
+httpx==0.28.1

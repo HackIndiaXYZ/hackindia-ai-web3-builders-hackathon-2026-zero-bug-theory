@@ -1,0 +1,14 @@
+{
+  "name": "@anemiascan/mst-commitment",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Canonical ANEMIASCAN_SCREENING_COMMITMENT_V1 builder for TypeScript/JavaScript (browser or Node), and the shared MST Testnet chain constants. Standalone — deliberately not wired into src/ yet; the frontend team can import commitment.mjs / constants.mjs directly when ready.",
+  "type": "module",
+  "main": "commitment.mjs",
+  "scripts": {
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.16.0"
+  }
+}
