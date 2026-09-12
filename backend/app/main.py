@@ -6,11 +6,14 @@ Run with: uvicorn app.main:app --reload --port 8000
 
 import asyncio
 import contextlib
+import io
 import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from PIL import Image
+from starlette.concurrency import run_in_threadpool
 
 from .chain import ChainNotConfigured, get_chain_client
 from .config import get_settings
@@ -22,6 +25,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("anemiascan")
 
 RECONCILE_INTERVAL_SECONDS = 30
+
+
+def _build_warmup_image_bytes() -> bytes:
+    """A tiny synthetic JPEG used only to force the real model to load (and
+    run one full forward pass) at startup, so a missing/broken bundle fails
+    loudly in the logs instead of on a user's first request.
+    """
+    buffer = io.BytesIO()
+    Image.new("RGB", (128, 128), color=(150, 110, 110)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+_WARMUP_IMAGE_BYTES = _build_warmup_image_bytes()
 
 
 async def _reconciliation_loop() -> None:
@@ -58,6 +74,18 @@ async def lifespan(app: FastAPI):
             logger.info("MST chain ID verified live: %s (%s)", live_chain_id, settings.mst_network)
     except ChainNotConfigured as err:
         logger.warning("MST chain adapter not ready yet: %s", err)
+
+    if settings.inference_provider == "real":
+        try:
+            from .inference import get_inference_provider
+
+            provider = get_inference_provider(settings)
+            await run_in_threadpool(provider.run, image_bytes=_WARMUP_IMAGE_BYTES)
+            logger.info("AnemiaScan V3.1 model loaded and warmed up (device=%s)", settings.ml_device)
+        except Exception:  # noqa: BLE001 — must never crash startup; the endpoint will 503 until fixed
+            logger.exception(
+                "Real inference model failed to load at startup — /registry/screenings will 503 until fixed"
+            )
 
     task = asyncio.create_task(_reconciliation_loop())
     try:

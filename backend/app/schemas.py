@@ -45,18 +45,12 @@ class VerifyResponse(BaseModel):
 
 
 # -- registry / screenings ----------------------------------------------
-
-
-class ScreeningCreateRequest(BaseModel):
-    """Never carries the eye image itself — only a client-computed digest of
-    it, plus the quality signals the capture flow already derives.
-    """
-
-    image_digest: str = Field(..., description="0x-prefixed keccak256/sha256 digest of the captured region")
-    brightness: float = Field(..., ge=0, le=255)
-    quality_hint: float | None = Field(None, ge=0, le=1)
-    consent_hash: str = Field(..., description="0x-prefixed hash of the off-chain consent record")
-    captured_at: int | None = Field(None, description="unix seconds; defaults to server time if omitted")
+#
+# POST /registry/screenings takes multipart/form-data (an `image` file plus
+# `consent_hash`/`captured_at` form fields), not a JSON body, since it must
+# carry the raw captured image for real inference — see
+# routers/registry.py:create_screening for the actual FastAPI signature.
+# There is deliberately no request schema class here for that reason.
 
 
 class ScreeningResponse(BaseModel):

@@ -1,0 +1,11 @@
+# AnemiaScan — robots.txt
+# A screening-aid PWA. Public marketing/landing content is crawlable; the
+# offline service-worker fallback page is not worth indexing on its own.
+
+User-agent: *
+Allow: /
+Disallow: /offline.html
+
+# No sitemap is published yet. When this app gets a permanent hosted origin,
+# add a sitemap.xml to public/ and reference it here:
+# Sitemap: https://<your-domain>/sitemap.xml

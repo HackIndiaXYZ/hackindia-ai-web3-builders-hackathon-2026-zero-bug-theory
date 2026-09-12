@@ -11,19 +11,19 @@ import os
 import time
 
 from eth_utils import keccak
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from web3 import Web3
 
 from ..chain import ChainNotConfigured, get_chain_client
 from ..commitment import build_screening_commitment
 from ..config import get_settings
 from ..db import get_db
-from ..inference import MockInferenceProvider
+from ..inference import REAL_MODEL_WARNING, get_inference_provider
 from ..models import AuditEvent, ChainTransaction, ScanSession
 from ..schemas import (
     DEMO_MODE_NOTICE,
-    ScreeningCreateRequest,
     ScreeningResponse,
     ScreeningVerifyRequest,
     ScreeningVerifyResponse,
@@ -42,44 +42,67 @@ def _random_hash32() -> str:
 
 
 @router.post("/screenings", response_model=ScreeningResponse, status_code=201)
-def create_screening(body: ScreeningCreateRequest, db: Session = Depends(get_db)) -> ScreeningResponse:
+async def create_screening(
+    image: UploadFile = File(..., description="Captured palpebral/conjunctiva ROI photo"),
+    consent_hash: str = Form(..., description="0x-prefixed hash of the off-chain consent record"),
+    captured_at: int | None = Form(None, description="unix seconds; defaults to server time if omitted"),
+    db: Session = Depends(get_db),
+) -> ScreeningResponse:
     settings = get_settings()
-    if not settings.mst_mock_model_hash:
+    if settings.inference_provider == "mock" and not settings.mst_mock_model_hash:
         raise HTTPException(
             503,
             "MST_MOCK_MODEL_HASH is not configured. Run `npm run grant-roles:testnet` in contracts/ "
             "and copy the printed hash into backend/.env.",
         )
 
-    captured_at = body.captured_at or int(time.time())
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(400, "empty image upload")
+
+    try:
+        provider = get_inference_provider(settings)
+    except ValueError as err:
+        raise HTTPException(503, str(err)) from err
+
+    try:
+        outcome = await run_in_threadpool(provider.run, image_bytes=image_bytes)
+    except RuntimeError as err:
+        raise HTTPException(503, str(err)) from err
+
+    if outcome.recapture_required:
+        raise HTTPException(
+            422,
+            detail={"decision": "recapture_required", "quality": outcome.quality, "message": outcome.warning},
+        )
+
+    result = outcome.result
+    captured_at = captured_at or int(time.time())
     scan_id_hash = _random_hash32()
     salt = _random_hash32()
 
-    provider = MockInferenceProvider(model_hash=settings.mst_mock_model_hash)
-    result = provider.run(image_digest=body.image_digest, brightness=body.brightness, quality_hint=body.quality_hint)
-
     commitment = build_screening_commitment(
         scan_id_hash=scan_id_hash,
-        image_digest=body.image_digest,
+        image_digest=outcome.image_digest,
         model_hash=result.model_hash,
         risk_code=result.risk_code,
         recommendation_code=result.recommendation_code,
         confidence_bps=result.confidence_bps,
         quality_bps=result.quality_bps,
-        consent_hash=body.consent_hash,
+        consent_hash=consent_hash,
         captured_at=captured_at,
         salt=salt,
     )
 
     scan_session = ScanSession(
         scan_id_hash=scan_id_hash,
-        image_digest=body.image_digest,
+        image_digest=outcome.image_digest,
         model_hash=result.model_hash,
         risk_code=result.risk_code,
         recommendation_code=result.recommendation_code,
         confidence_bps=result.confidence_bps,
         quality_bps=result.quality_bps,
-        consent_hash=body.consent_hash,
+        consent_hash=consent_hash,
         captured_at=captured_at,
         salt=salt,
         commitment=commitment,
@@ -149,7 +172,7 @@ def create_screening(body: ScreeningCreateRequest, db: Session = Depends(get_db)
         confidence_bps=result.confidence_bps,
         quality_bps=result.quality_bps,
         is_synthetic=result.is_synthetic,
-        demo_notice=DEMO_MODE_NOTICE,
+        demo_notice=outcome.warning,
         registered_on_chain=scan_session.registered_on_chain,
         chain_tx_hash=tx_hash,
         chain_tx_status=tx_status,
@@ -175,7 +198,7 @@ def get_screening(scan_id_hash: str, db: Session = Depends(get_db)) -> Screening
         confidence_bps=scan_session.confidence_bps,
         quality_bps=scan_session.quality_bps,
         is_synthetic=scan_session.is_synthetic,
-        demo_notice=DEMO_MODE_NOTICE,
+        demo_notice=DEMO_MODE_NOTICE if scan_session.is_synthetic else REAL_MODEL_WARNING,
         registered_on_chain=scan_session.registered_on_chain,
         chain_tx_hash=tx.tx_hash if tx else None,
         chain_tx_status=tx.status if tx else None,
