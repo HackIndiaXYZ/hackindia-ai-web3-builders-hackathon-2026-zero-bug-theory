@@ -2,7 +2,7 @@
 
 These don't assert anything about medical accuracy (this is a screening
 prototype, not validated for that here) — just that the full pipeline
-(decode -> quality gate -> two CNN encoders -> stacker -> calibration ->
+(decode -> quality gate -> EfficientNet + ConvNeXt + ViT -> stacker -> calibration ->
 decision) runs end to end without exploding, and that a plainly bad capture
 is correctly routed to `recapture_required` instead of a fabricated result.
 

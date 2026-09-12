@@ -1,46 +1,51 @@
-# Aneris
+# AnemiaScan
 
-Hackathon team repository for Zero bug theory - [hackindia-team:hackindia-ai-web3-builders-hackathon-2026:zero-bug-theory]
+AnemiaScan is a responsive React screening interface backed by a FastAPI
+service and the deterministic AnemiaScan V4 ensemble. It is a research
+screening aid, not a diagnostic device; results require CBC/haemoglobin testing
+and professional evaluation.
 
-## Tech Stack
+## Repository layout
 
-This project is built with:
-- React
-- Vite
-- Tailwind CSS
-- pnpm
+- `src/`, `components/`, `lib/` — React 19 + Vite + Tailwind frontend.
+- `backend/` — FastAPI, V4 inference, persistence, auth, and MST adapters.
+- `contracts/` — Hardhat contracts for screening commitments and CarePool.
+- `sdk/` — shared commitment helpers and verification vector.
+- `docs/DEPLOYMENT.md` — blockchain architecture and deployment notes.
 
-## Getting Started
+## Run locally
 
-### Installation
+Install and start the frontend:
 
-Install the project dependencies using `pnpm`:
-
-```bash
-pnpm install
+```powershell
+corepack pnpm install
+corepack pnpm run dev
 ```
 
-### Development Server
+Copy `.env.example` to `.env.local` and keep
+`VITE_API_BASE_URL=http://localhost:8000` for local development.
 
-Start the local development server:
+The backend requires Python 3.11 and the trusted V4 bundle. From `backend/`:
 
-```bash
-pnpm run dev
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
+.\.venv\Scripts\pip.exe install -r requirements.txt
+.\.venv\Scripts\python.exe scripts\install_v4_bundle.py G:\path\to\anemiascan_v4_eff_conv_vit_bundle.zip
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
-### Build
+The installer validates and extracts only the required trusted artifacts into
+the gitignored `backend/app/ml/model_assets/` directory. See
+[`backend/README.md`](backend/README.md) for the API, model flow, tests, and
+Unix command equivalents.
 
-Build the project for production:
+## Verify
 
-```bash
-pnpm run build
+```powershell
+corepack pnpm exec tsc --noEmit
+corepack pnpm run build
+cd backend
+.\.venv\Scripts\python.exe -m pytest -q
 ```
-
-## MST Blockchain integration
-
-Smart contracts (`contracts/`), backend (`backend/`), and a shared
-commitment SDK (`sdk/`) live as separate, self-contained projects with
-their own dependencies — none of it touches this app's `src/` or its
-`pnpm` install. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the
-full architecture, what's been verified against the live MST Testnet, and
-deployment steps.

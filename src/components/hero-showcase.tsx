@@ -38,36 +38,36 @@ const CHAPTERS: StoryChapter[] = [
   },
   {
     id: 'signals',
-    caption: 'Step 02 · Signal extraction',
-    title: 'Five readings from one patch of tissue',
+    caption: 'Step 02 · Model inputs',
+    title: 'Three vision models and 32 features',
     subtitle:
-      'Pallor, redness, saturation, vascular texture and illumination are each measured separately and shown to you individually.',
+      'EfficientNet-B3, ConvNeXt-Tiny and ViT-B/16 each produce a logit alongside standardized colour and texture features.',
     accent: 'var(--chart-3)',
     detail:
-      'The captured frame is drawn to a canvas and sampled pixel by pixel. Each signal is normalised to 0–100 so a washed-out photo and a well-lit one can be compared, and each keeps its own reading rather than disappearing into a single opaque number.',
-    facets: ['Per-channel colour', 'Local texture variance', 'Normalised 0–100'],
+      'The backend decodes the guided ROI, applies the bundle’s exact model preprocessing, and constructs the saved stacker input in a fixed 35-value order.',
+    facets: ['Three trained logits', '32 engineered features', 'Exact fixed order'],
   },
   {
     id: 'model',
     caption: 'Step 03 · Risk model',
-    title: 'A weighted blend, with its weights on show',
+    title: 'A calibrated screening score',
     subtitle:
-      'The five readings combine into one screening score and one of three bands — Low, Moderate or Elevated.',
+      'A saved logistic stacker and Platt calibration produce one score and a lower-risk, higher-risk or uncertain result.',
     accent: 'var(--chart-4)',
     detail:
-      'Every signal carries a visible weight, so you can see which reading moved the score. Capture quality feeds a separate confidence figure: a marginal photo lowers confidence instead of quietly pretending to certainty. A frame that is simply too dark is refused outright.',
-    facets: ['Transparent weights', 'Confidence, not certainty', 'Refuses bad frames'],
+      'The operating threshold and uncertainty margin come from the validated V4 configuration. An image that fails the quality gate is refused without an anaemia classification.',
+    facets: ['Platt calibrated', 'Explicit uncertainty', 'Refuses bad frames'],
   },
   {
     id: 'insights',
     caption: 'Step 04 · Insights',
     title: 'Plain language, and what to do next',
     subtitle:
-      'Each result comes with what the signals mean, what could have skewed them, and concrete, safe next steps.',
+      'Each result shows the real score, threshold, image quality and internal benchmark with safe next steps.',
     accent: 'var(--moderate)',
     detail:
-      'The insights view reads the breakdown back in sentences: which signal stood out, what a benign explanation would look like, and what a genuine one would. Advice stays inside safe ground — get a haemoglobin test, do not self-prescribe iron, and treat urgent symptoms as urgent.',
-    facets: ['Signal-by-signal notes', 'Confounders named', 'Safe next steps'],
+      'The Insights view reports only values returned by V4 and metrics.json. Advice stays inside safe ground: confirm concerns with a CBC or haemoglobin test and professional evaluation.',
+    facets: ['Real model values', 'Benchmark labelled', 'Safe next steps'],
   },
   {
     id: 'trends',
@@ -85,10 +85,10 @@ const CHAPTERS: StoryChapter[] = [
     caption: 'Step 06 · Share',
     title: 'Something useful to hand a clinician',
     subtitle:
-      'A result you can show at an appointment: the band, the confidence, the breakdown and the date.',
+      'A result you can show at an appointment: the calibrated score, risk band, model version and date.',
     accent: 'var(--safe)',
     detail:
-      'The point of a screen is the conversation it starts. A result summarises what was measured and how confident the reading was, in a form you can show to a nurse or doctor — alongside the reminder, printed on every screen, that only a blood test can confirm anaemia.',
+      'The point of a screen is the conversation it starts. A result summarises the V4 output in a form you can show to a nurse or doctor—alongside the reminder that only appropriate clinical testing can confirm anaemia.',
     facets: ['Readable summary', 'Dated and scored', 'Blood test still decides'],
   },
 ]

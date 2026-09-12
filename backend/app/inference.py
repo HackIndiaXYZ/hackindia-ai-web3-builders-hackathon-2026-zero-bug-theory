@@ -1,4 +1,4 @@
-"""Inference-provider interface: the real AnemiaScan V3.1 bundle, plus a
+"""Inference-provider interface: the real AnemiaScan V4 bundle, plus a
 deterministic mock kept around for CI/offline dev.
 
 `RealInferenceProvider` (app/ml/predictor.py) runs the actual trained model
@@ -10,7 +10,7 @@ result (risk/recommendation/confidence/quality) are persisted. See
 routers/registry.py for exactly where that boundary is enforced.
 
 `MockInferenceProvider` stays available behind `INFERENCE_PROVIDER=mock`
-for environments without the ~150MB of model weights (e.g. CI): it's a
+for environments without the ~500 MB of model assets (e.g. CI): it's a
 deterministic function of the image digest (so re-scanning the same
 capture reproduces the same result) and the image's own brightness.
 
@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
-from eth_utils import keccak
 from PIL import Image
 
 from .schemas import DEMO_MODE_NOTICE
@@ -32,18 +31,9 @@ from .schemas import DEMO_MODE_NOTICE
 RISK_LOW, RISK_MODERATE, RISK_ELEVATED = 0, 1, 2
 RECOMMEND_SELF_MONITOR, RECOMMEND_FOLLOW_UP, RECOMMEND_URGENT = 0, 1, 2
 
-# Sentinel model hash for the real bundle, computed the same way
-# contracts/scripts/grantRoles.ts computes MOCK_MODEL_HASH — keccak256 of a
-# UTF-8 tag string. Registering this on AnemiaRegistry (via registerModel)
-# is a separate, optional on-chain step; nothing here requires it to be
-# registered when the chain isn't configured (see chain.ChainNotConfigured
-# handling in routers/registry.py).
-REAL_MODEL_TAG = "ANEMIASCAN_V3_1_CALIBRATED_LOGISTIC_STACKER"
-REAL_MODEL_HASH = "0x" + keccak(text=REAL_MODEL_TAG).hex()
-
 REAL_MODEL_WARNING = (
-    "Research screening result only; obtain a CBC/hemoglobin test and "
-    "professional evaluation for diagnosis."
+    "Research screening result only. Confirm using a CBC/hemoglobin test and "
+    "professional evaluation."
 )
 
 
@@ -146,9 +136,9 @@ _DECISION_TO_CODES = {
 
 
 class RealInferenceProvider:
-    """Runs the trained AnemiaScan V3.1 calibrated bundle (app/ml/predictor.py)."""
+    """Runs the trained AnemiaScan V4 calibrated bundle (app/ml/predictor.py)."""
 
-    def __init__(self, model_hash: str, device: str = "cpu"):
+    def __init__(self, model_hash: str = "", device: str = "auto"):
         self.model_hash = model_hash
         self.device = device
 
@@ -181,7 +171,7 @@ class RealInferenceProvider:
             # The bundle only exposes a binary accept/reject quality gate, not a
             # continuous score — every accepted capture already cleared that gate.
             quality_bps=10000,
-            model_hash=self.model_hash,
+            model_hash=self.model_hash or predictor.model_hash,
             is_synthetic=False,
         )
         return InferenceOutcome(
@@ -198,5 +188,4 @@ def get_inference_provider(settings) -> "MockInferenceProvider | RealInferencePr
         if not settings.mst_mock_model_hash:
             raise ValueError("MST_MOCK_MODEL_HASH is not configured")
         return MockInferenceProvider(model_hash=settings.mst_mock_model_hash)
-    model_hash = settings.mst_real_model_hash or REAL_MODEL_HASH
-    return RealInferenceProvider(model_hash=model_hash, device=settings.ml_device)
+    return RealInferenceProvider(model_hash=settings.mst_real_model_hash, device=settings.ml_device)

@@ -155,11 +155,8 @@ function HistoryRow({
             <span className="truncate text-sm font-medium text-foreground">{scan.riskLevel}</span>
             {isLatest ? <Badge variant="secondary">Latest</Badge> : null}
           </span>
-          {/* Two lines, not one truncated line: at 390px the row has roughly
-              188px of text width, which clipped "confidence NN/100" — the one
-              number that tells the user whether the reading is trustworthy. */}
           <span className="text-2xs text-muted-foreground">
-            {formatRelativeTime(scan.createdAt)} · confidence {scan.confidence}/100
+            {formatRelativeTime(scan.createdAt)} · screening score, not diagnostic certainty
           </span>
           <span className="truncate text-2xs text-muted-foreground">{stamp}</span>
         </span>

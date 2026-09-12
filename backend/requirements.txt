@@ -32,7 +32,7 @@ py-ecc==7.0.1
 pytest==8.4.2
 httpx==0.28.1
 
-# --- AnemiaScan V3.1 real inference (app/ml/) -------------------------------
+# --- AnemiaScan V4 real inference (app/ml/) ---------------------------------
 # torch/torchvision are CPU-only builds — install with:
 #   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
 # before `pip install -r requirements.txt` (or after; order doesn't matter).
@@ -44,12 +44,7 @@ pillow==12.3.0
 numpy==2.4.6
 opencv-python-headless==5.0.0.93
 joblib==1.6.0
-# Pinned below the latest (1.9.x fails to import on this dev machine: a
-# Windows Application Control policy blocks sklearn's compiled `_cyutility`
-# helper introduced in newer builds). 1.4.2 unpickles the bundle's
-# stacking_model.joblib (trained with sklearn 1.6.1) fine — just an
-# InconsistentVersionWarning, not a functional break; verified in
-# tests/test_inference.py.
-scikit-learn==1.4.2
+# Match the version used to serialize the trusted V4 stacker.
+scikit-learn==1.6.1
 torch==2.5.1
 torchvision==0.20.1

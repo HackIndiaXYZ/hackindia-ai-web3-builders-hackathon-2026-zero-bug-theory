@@ -29,12 +29,12 @@ const steps = [
   {
     icon: Sparkles,
     title: 'Scored by a real AI model',
-    body: 'Five colour and texture signals — pallor, redness, saturation, texture and illumination — are measured, sent securely, and scored by a trained model on our server.',
+    body: 'The guided ROI is sent securely to V4: three trained vision models and 32 standardized colour and texture features feed a calibrated logistic stacker.',
   },
   {
     icon: Stethoscope,
     title: 'Read it as a prompt, not a verdict',
-    body: 'You get a risk band with a confidence figure. An elevated band is a reason to get a blood test, never a diagnosis by itself.',
+    body: 'You get a calibrated screening score and risk band. Higher-risk or uncertain results are prompts for professional evaluation, never diagnoses.',
   },
 ]
 

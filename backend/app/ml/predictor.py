@@ -1,21 +1,18 @@
-"""AnemiaScan V3.1 calibrated bundle — in-process inference runtime.
+"""Deterministic AnemiaScan V4 model runtime.
 
-Ported from the vendor bundle's own `inference.py` (see
-`model_assets/BUNDLE_README.md` and `model_assets/inference_contract.json`
-for provenance). The only real change from the vendor copy is that
-`decode_rgb` and `AnemiaScanV31Predictor.predict_bytes` operate on raw bytes
-already in memory instead of reading a file from disk — the FastAPI layer
-never writes the uploaded image to disk, only holds it in memory for the
-duration of one request (see app/inference.py's module docstring).
-
-Input must be an already segmented palpebral/conjunctiva ROI. This is a
-screening prototype, not a diagnosis — see `quality_report`'s
-recapture-required gate and the warning string every prediction carries.
+The implementation mirrors the trusted bundle's ``inference.py`` while
+accepting already-read image bytes from FastAPI. Only static files under the
+configured model-assets directory are loaded; uploaded files are never treated
+as checkpoints or persisted to disk.
 """
 
-from functools import lru_cache
-from pathlib import Path
+from __future__ import annotations
+
+import hashlib
 import json
+import threading
+from pathlib import Path
+from typing import Any
 
 import cv2
 import joblib
@@ -24,18 +21,45 @@ import torch
 from PIL import Image
 from torch import nn
 from torchvision import transforms
-from torchvision.models import convnext_tiny, efficientnet_b3
+from torchvision.models import convnext_tiny, efficientnet_b3, vit_b_16
 from torchvision.transforms import InterpolationMode
 
-
+MODEL_VERSION = "anemiascan-v4-eff-conv-vit"
+MODEL_ASSETS_DIR = Path(__file__).resolve().parent / "model_assets"
+CORRECTED_OPERATING_THRESHOLD = 0.24259322528166496
+UNCERTAINTY_MARGIN = 0.06909162763627245
+WARNING = (
+    "Research screening result only. Confirm using a CBC/hemoglobin test and "
+    "professional evaluation."
+)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
-EPS = 1e-6
+MAX_IMAGE_DIMENSION = 8192
+MAX_IMAGE_PIXELS = 40_000_000
 
-MODEL_ASSETS_DIR = Path(__file__).resolve().parent / "model_assets"
+REQUIRED_MODEL_FILES = {
+    "base_models/efficientnet_b3_best.pth",
+    "base_models/convnext_tiny_best.pth",
+    "vit_b16_best.pth",
+    "stacking_model.joblib",
+    "train_only_scalers.npz",
+    "runtime_config.json",
+    "metrics.json",
+    "inference.py",
+}
 
 
-def strip_bad_png_iccp(raw):
+class ModelUnavailableError(RuntimeError):
+    """The trusted V4 bundle is missing, incompatible, or failed to load."""
+
+
+class InvalidImageError(ValueError):
+    """The uploaded bytes are not a supported, safely sized image."""
+
+
+def _strip_bad_png_iccp(raw: bytes) -> bytes:
+    """Drop a malformed PNG iCCP chunk without changing other image bytes."""
+
     signature = b"\x89PNG\r\n\x1a\n"
     if not raw.startswith(signature):
         return raw
@@ -55,72 +79,39 @@ def strip_bad_png_iccp(raw):
     return bytes(output)
 
 
-def decode_rgb(raw_bytes):
-    """Decode an in-memory image (no disk I/O) into an RGB uint8 array."""
-    raw = strip_bad_png_iccp(raw_bytes)
+def decode_rgb(raw_bytes: bytes) -> np.ndarray:
+    """Decode PNG/JPEG bytes with OpenCV and normalize grayscale/BGR/BGRA to RGB."""
+
+    if not raw_bytes:
+        raise InvalidImageError("The uploaded image is empty.")
+    raw = _strip_bad_png_iccp(raw_bytes)
     decoded = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
     if decoded is None:
-        raise ValueError("OpenCV could not decode the uploaded image")
+        raise InvalidImageError("OpenCV could not decode the uploaded PNG or JPEG image.")
     if decoded.ndim == 2:
         rgb = cv2.cvtColor(decoded, cv2.COLOR_GRAY2RGB)
-    elif decoded.shape[2] == 4:
+    elif decoded.ndim == 3 and decoded.shape[2] == 4:
         rgb = cv2.cvtColor(decoded, cv2.COLOR_BGRA2RGB)
-    elif decoded.shape[2] == 3:
+    elif decoded.ndim == 3 and decoded.shape[2] == 3:
         rgb = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
     else:
-        raise ValueError(f"Unsupported image shape: {decoded.shape}")
+        raise InvalidImageError(f"Unsupported decoded image shape: {decoded.shape}.")
+    height, width = rgb.shape[:2]
+    if height <= 0 or width <= 0:
+        raise InvalidImageError("The decoded image has invalid dimensions.")
+    if max(height, width) > MAX_IMAGE_DIMENSION or height * width > MAX_IMAGE_PIXELS:
+        raise InvalidImageError(
+            f"Decoded image dimensions {width}x{height} exceed the safety limit."
+        )
     return np.ascontiguousarray(rgb, dtype=np.uint8)
 
 
-def gray_entropy(gray):
-    histogram = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
-    probability = histogram / max(float(histogram.sum()), 1.0)
-    probability = probability[probability > 0]
-    return float(-(probability * np.log2(probability)).sum() / 8.0)
-
-
-def engineered_features(rgb):
-    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    values = []
-    for channel in cv2.split(rgb):
-        values += [
-            channel.mean() / 255,
-            channel.std() / 255,
-            np.percentile(channel, 25) / 255,
-            np.percentile(channel, 75) / 255,
-        ]
-    for channel, scale in zip(cv2.split(hsv), (179, 255, 255)):
-        values += [channel.mean() / scale, channel.std() / scale]
-    for channel in cv2.split(lab):
-        values += [channel.mean() / 255, channel.std() / 255]
-    laplacian = cv2.Laplacian(gray, cv2.CV_32F)
-    sx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-    sy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-    sobel = cv2.magnitude(sx, sy)
-    values += [
-        gray.mean() / 255,
-        gray.std() / 255,
-        np.percentile(gray, 10) / 255,
-        np.percentile(gray, 90) / 255,
-        np.clip(laplacian.var() / 5000, 0, 1),
-        np.clip(sobel.mean() / 255, 0, 1),
-        gray_entropy(gray),
-        (hsv[:, :, 1] > 180).mean(),
-    ]
-    result = np.asarray(values, dtype=np.float32)
-    if result.shape != (32,) or not np.isfinite(result).all():
-        raise RuntimeError(f"Invalid engineered features: {result}")
-    return result
-
-
-def quality_report(rgb):
+def quality_report(rgb: np.ndarray) -> dict[str, Any]:
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     brightness = float(gray.mean())
     blur = float(cv2.Laplacian(gray, cv2.CV_32F).var())
     clipped = float(((gray <= 3) | (gray >= 252)).mean())
-    failures = []
+    failures: list[str] = []
     if min(rgb.shape[:2]) < 96:
         failures.append("roi_too_small")
     if brightness < 12:
@@ -138,15 +129,56 @@ def quality_report(rgb):
     }
 
 
-def inference_transform(size):
-    resize_size = 320 if size == 300 else 236
-    interpolation = (
-        InterpolationMode.BICUBIC if size == 300 else InterpolationMode.BILINEAR
-    )
+def _gray_entropy(gray: np.ndarray) -> float:
+    histogram = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+    probability = histogram / max(float(histogram.sum()), 1.0)
+    probability = probability[probability > 0]
+    return float(-(probability * np.log2(probability)).sum() / 8.0)
+
+
+def engineered_features(rgb: np.ndarray) -> np.ndarray:
+    """Extract the bundle's exact 32 RGB/HSV/LAB/brightness/texture features."""
+
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    values: list[float] = []
+    for channel in cv2.split(rgb):
+        values += [
+            channel.mean() / 255,
+            channel.std() / 255,
+            np.percentile(channel, 25) / 255,
+            np.percentile(channel, 75) / 255,
+        ]
+    for channel, scale in zip(cv2.split(hsv), (179, 255, 255)):
+        values += [channel.mean() / scale, channel.std() / scale]
+    for channel in cv2.split(lab):
+        values += [channel.mean() / 255, channel.std() / 255]
+    laplacian = cv2.Laplacian(gray, cv2.CV_32F)
+    horizontal = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    vertical = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    sobel = cv2.magnitude(horizontal, vertical)
+    values += [
+        gray.mean() / 255,
+        gray.std() / 255,
+        np.percentile(gray, 10) / 255,
+        np.percentile(gray, 90) / 255,
+        np.clip(laplacian.var() / 5000, 0, 1),
+        np.clip(sobel.mean() / 255, 0, 1),
+        _gray_entropy(gray),
+        (hsv[:, :, 1] > 180).mean(),
+    ]
+    result = np.asarray(values, dtype=np.float32)
+    if result.shape != (32,) or not np.isfinite(result).all():
+        raise RuntimeError("The engineered-feature pipeline did not produce 32 finite values.")
+    return result
+
+
+def image_transform(resize: int, crop: int, interpolation: InterpolationMode):
     return transforms.Compose(
         [
-            transforms.Resize(resize_size, interpolation=interpolation),
-            transforms.CenterCrop(size),
+            transforms.Resize(resize, interpolation=interpolation),
+            transforms.CenterCrop(crop),
             transforms.ToTensor(),
             transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
         ]
@@ -154,7 +186,7 @@ def inference_transform(size):
 
 
 class BaseTransferClassifier(nn.Module):
-    def __init__(self, name):
+    def __init__(self, name: str):
         super().__init__()
         self.name = name
         if name == "efficientnet_b3":
@@ -167,283 +199,294 @@ class BaseTransferClassifier(nn.Module):
                 nn.Dropout(0.2),
                 nn.Linear(256, 1),
             )
-            self.embedding_dim = dimension
         elif name == "convnext_tiny":
             self.net = convnext_tiny(weights=None)
             dimension = self.net.classifier[-1].in_features
             self.net.classifier[-1] = nn.Sequential(
                 nn.Dropout(0.30), nn.Linear(dimension, 1)
             )
-            self.embedding_dim = dimension
         else:
             raise ValueError(name)
 
-    def encode(self, image):
-        if self.name == "efficientnet_b3":
-            value = self.net.features(image)
-            value = self.net.avgpool(value)
-            return torch.flatten(value, 1)
+    def encode(self, image: torch.Tensor) -> torch.Tensor:
         value = self.net.features(image)
         value = self.net.avgpool(value)
-        value = self.net.classifier[0](value)
+        if self.name == "convnext_tiny":
+            value = self.net.classifier[0](value)
         return torch.flatten(value, 1)
 
-    def classify_embedding(self, embedding):
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        embedding = self.encode(image)
         if self.name == "efficientnet_b3":
             return self.net.classifier(embedding).flatten()
         return self.net.classifier[-1](embedding).flatten()
 
 
-class AnemiaFusionNetV31(nn.Module):
-    def __init__(
-        self,
-        efficientnet_dim=1536,
-        convnext_dim=768,
-        feature_dim=32,
-        projection_dim=64,
-    ):
+class ViTB16Binary(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.efficientnet_branch = nn.Sequential(
-            nn.LayerNorm(efficientnet_dim),
-            nn.Linear(efficientnet_dim, projection_dim),
-            nn.GELU(),
-            nn.Dropout(0.50),
-        )
-        self.convnext_branch = nn.Sequential(
-            nn.LayerNorm(convnext_dim),
-            nn.Linear(convnext_dim, projection_dim),
-            nn.GELU(),
-            nn.Dropout(0.50),
-        )
-        self.feature_branch = nn.Sequential(
-            nn.Linear(feature_dim, 64),
-            nn.GELU(),
-            nn.Dropout(0.45),
-            nn.Linear(64, projection_dim),
-            nn.GELU(),
-            nn.Dropout(0.25),
-        )
-        self.gate = nn.Sequential(
-            nn.Linear(projection_dim * 3, 64),
-            nn.GELU(),
-            nn.Dropout(0.35),
-            nn.Linear(64, 3),
-        )
-        self.head = nn.Sequential(
-            nn.LayerNorm(projection_dim * 3),
-            nn.Linear(projection_dim * 3, 64),
-            nn.GELU(),
-            nn.Dropout(0.50),
-            nn.Linear(64, 1),
+        self.net = vit_b_16(weights=None)
+        self.net.heads.head = nn.Sequential(
+            nn.LayerNorm(768), nn.Dropout(0.30), nn.Linear(768, 1)
         )
 
-    def forward(self, efficientnet_embedding, convnext_embedding, features):
-        branches = [
-            self.efficientnet_branch(efficientnet_embedding),
-            self.convnext_branch(convnext_embedding),
-            self.feature_branch(features),
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        return self.net(image).flatten()
+
+
+def build_stacker_input(
+    efficientnet_logit: float,
+    convnext_logit: float,
+    vit_logit: float,
+    standardized_features: np.ndarray,
+) -> np.ndarray:
+    """Build [Eff, ConvNeXt, ViT, feature_00..feature_31] exactly."""
+
+    values = np.concatenate(
+        [
+            np.asarray(
+                [efficientnet_logit, convnext_logit, vit_logit], dtype=np.float64
+            ),
+            np.asarray(standardized_features, dtype=np.float64),
         ]
-        context = torch.cat(branches, dim=1)
-        gates = torch.softmax(self.gate(context), dim=1)
-        gated = torch.cat(
-            [branch * gates[:, i : i + 1] for i, branch in enumerate(branches)],
-            dim=1,
-        )
-        return self.head(gated).flatten(), gates
+    )
+    if values.shape != (35,) or not np.isfinite(values).all():
+        raise RuntimeError("The stacker input must contain exactly 35 finite values.")
+    return values.reshape(1, 35)
 
 
-def sigmoid_np(value):
-    value = np.clip(np.asarray(value, dtype=float), -40, 40)
-    return 1 / (1 + np.exp(-value))
+def decision_from_probability(probability: float) -> tuple[str, bool]:
+    """Apply the corrected operating point and its inclusive uncertainty band."""
+
+    if not np.isfinite(probability) or not 0 <= probability <= 1:
+        raise ValueError("The calibrated screening probability must be finite and in [0, 1].")
+    uncertain = abs(probability - CORRECTED_OPERATING_THRESHOLD) <= UNCERTAINTY_MARGIN
+    if uncertain:
+        return "uncertain", True
+    return (
+        "higher_risk" if probability >= CORRECTED_OPERATING_THRESHOLD else "lower_risk",
+        False,
+    )
 
 
-def apply_calibration(raw_probability, config):
-    raw = np.clip(np.asarray(raw_probability, dtype=float), EPS, 1 - EPS)
-    logits = np.log(raw / (1 - raw))
-    if config["method"] == "identity":
-        return raw
-    if config["method"] == "temperature":
-        return sigmoid_np(logits / float(config["parameters"]["temperature"]))
-    if config["method"] == "platt":
-        parameters = config["parameters"]
-        return sigmoid_np(
-            float(parameters["coefficient"]) * logits
-            + float(parameters["intercept"])
-        )
-    raise ValueError(f"Unknown calibration method: {config}")
+def _required_content_hash(root: Path) -> str:
+    digest = hashlib.sha256()
+    for relative in sorted(REQUIRED_MODEL_FILES):
+        path = root / relative
+        if not path.is_file():
+            raise ModelUnavailableError(f"Missing required V4 model artifact: {relative}")
+        encoded_name = relative.encode("utf-8")
+        digest.update(len(encoded_name).to_bytes(4, "big"))
+        digest.update(encoded_name)
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
-class AnemiaScanV31Predictor:
-    def __init__(self, bundle_directory, device=None):
-        self.root = Path(bundle_directory)
-        self.device = torch.device(
-            device or ("cuda" if torch.cuda.is_available() else "cpu")
-        )
-        self.runtime = json.loads((self.root / "runtime_config.json").read_text())
-        self.thresholds = self.runtime["thresholds"]
-        self.calibration = self.runtime["calibration"]
-        scalers = np.load(self.root / "train_only_scalers.npz")
-        self.feature_mean = scalers["feature_mean"].astype(np.float32)
-        self.feature_std = scalers["feature_std"].astype(np.float32)
+def _resolve_device(requested: str | None) -> torch.device:
+    value = (requested or "auto").lower()
+    if value not in {"auto", "cpu", "cuda"}:
+        raise ModelUnavailableError("ML_DEVICE must be auto, cpu, or cuda.")
+    if value == "cuda" and not torch.cuda.is_available():
+        raise ModelUnavailableError("ML_DEVICE=cuda was requested but CUDA is unavailable.")
+    return torch.device("cuda" if value == "cuda" or (value == "auto" and torch.cuda.is_available()) else "cpu")
+
+
+class AnemiaScanV4Predictor:
+    """One process-wide, strict-loaded V4 predictor with serialized execution."""
+
+    def __init__(self, bundle_directory: Path = MODEL_ASSETS_DIR, device: str | None = "auto"):
+        self.root = Path(bundle_directory).resolve()
+        self.device = _resolve_device(device)
+        self._execution_lock = threading.Lock()
+
+        manifest_path = self.root / "model_manifest.json"
+        if not manifest_path.is_file():
+            raise ModelUnavailableError(
+                "AnemiaScan V4 assets are not installed. Run scripts/install_v4_bundle.py."
+            )
+        self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        actual_hash = _required_content_hash(self.root)
+        if self.manifest.get("model_hash") != actual_hash:
+            raise ModelUnavailableError("V4 model files do not match the installed SHA-256 manifest.")
+        self.model_hash = "0x" + actual_hash
+
+        self.runtime = json.loads((self.root / "runtime_config.json").read_text(encoding="utf-8"))
+        self.metrics = json.loads((self.root / "metrics.json").read_text(encoding="utf-8"))
+        self._validate_runtime()
+
+        with np.load(self.root / "train_only_scalers.npz") as scalers:
+            self.feature_mean = scalers["feature_mean"].astype(np.float32)
+            self.feature_std = scalers["feature_std"].astype(np.float32)
+        if (
+            self.feature_mean.shape != (32,)
+            or self.feature_std.shape != (32,)
+            or not np.isfinite(self.feature_mean).all()
+            or not np.isfinite(self.feature_std).all()
+            or np.any(self.feature_std <= 0)
+        ):
+            raise ModelUnavailableError("train_only_scalers.npz is incompatible with 32 V4 features.")
 
         self.efficientnet = self._load_base("efficientnet_b3")
         self.convnext = self._load_base("convnext_tiny")
-        self.stacker = joblib.load(self.root / self.runtime["stacker_model"])
+        self.vit = ViTB16Binary()
+        vit_checkpoint = self._load_checkpoint(self.root / "vit_b16_best.pth")
+        self.vit.load_state_dict(vit_checkpoint["state_dict"], strict=True)
+        self.vit = self.vit.float().to(self.device).eval()
 
-        gated_checkpoint = torch.load(
-            self.root / self.runtime["gated_model"],
-            map_location="cpu",
-            weights_only=False,
-        )
-        architecture = gated_checkpoint["architecture"]
-        self.gated_heads = []
-        for state in gated_checkpoint["head_state_dicts"]:
-            head = AnemiaFusionNetV31(
-                architecture["efficientnet_dim"],
-                architecture["convnext_dim"],
-                architecture["feature_dim"],
-                architecture["projection_dim"],
-            )
-            head.load_state_dict(state, strict=True)
-            self.gated_heads.append(head.to(self.device).eval())
+        self.stacker = joblib.load(self.root / "stacking_model.joblib")
+        if not isinstance(self.stacker, dict) or not {"scaler", "model"}.issubset(self.stacker):
+            raise ModelUnavailableError("stacking_model.joblib has an incompatible structure.")
+        for component_name in ("scaler", "model"):
+            count = getattr(self.stacker[component_name], "n_features_in_", None)
+            if count != 35:
+                raise ModelUnavailableError(
+                    f"The saved stacker {component_name} expects {count!r} inputs instead of 35."
+                )
 
-        self.transform_b3 = inference_transform(300)
-        self.transform_convnext = inference_transform(224)
+        self.efficientnet_transform = image_transform(320, 300, InterpolationMode.BICUBIC)
+        self.convnext_transform = image_transform(236, 224, InterpolationMode.BILINEAR)
+        self.vit_transform = image_transform(236, 224, InterpolationMode.BILINEAR)
 
-    def _load_base(self, name):
-        relative = self.runtime["base_models"][name]
-        checkpoint = torch.load(
-            self.root / relative, map_location="cpu", weights_only=False
-        )
-        if checkpoint.get("model_name") != name:
-            raise RuntimeError(f"Wrong {name} checkpoint")
+    def _validate_runtime(self) -> None:
+        expected_order = ["efficientnet_logit", "convnext_logit", "vit_logit"] + [
+            f"feature_{index:02d}" for index in range(32)
+        ]
+        if self.runtime.get("selected_candidate") != "calibrated_logistic_stacker":
+            raise ModelUnavailableError("V4 runtime does not select calibrated_logistic_stacker.")
+        if self.runtime.get("stacker_input_order") != expected_order:
+            raise ModelUnavailableError("V4 runtime stacker order is incompatible.")
+        bundled_threshold = float(self.runtime.get("selected_threshold", -1))
+        if abs(bundled_threshold - CORRECTED_OPERATING_THRESHOLD) > 0.000002:
+            raise ModelUnavailableError("V4 runtime threshold is incompatible with the corrected threshold.")
+        if float(self.runtime.get("uncertainty_margin", -1)) != UNCERTAINTY_MARGIN:
+            raise ModelUnavailableError("V4 runtime uncertainty margin is incompatible.")
+        calibration = self.runtime.get("calibration")
+        if not isinstance(calibration, dict) or not all(
+            np.isfinite(float(calibration.get(name, np.nan)))
+            for name in ("coefficient", "intercept")
+        ):
+            raise ModelUnavailableError("V4 Platt calibration parameters are invalid.")
+        benchmark = self.metrics.get("internal_benchmark")
+        if not isinstance(benchmark, dict) or int(benchmark.get("n", 0)) <= 0:
+            raise ModelUnavailableError("V4 internal benchmark metrics are missing.")
+
+    @staticmethod
+    def _load_checkpoint(path: Path) -> dict[str, Any]:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        if not isinstance(checkpoint, dict) or not isinstance(checkpoint.get("state_dict"), dict):
+            raise ModelUnavailableError(f"Checkpoint {path.name} has no state_dict.")
+        return checkpoint
+
+    def _load_base(self, name: str) -> BaseTransferClassifier:
+        checkpoint = self._load_checkpoint(self.root / "base_models" / f"{name}_best.pth")
         model = BaseTransferClassifier(name)
         model.load_state_dict(checkpoint["state_dict"], strict=True)
         return model.float().to(self.device).eval()
 
-    @torch.inference_mode()
-    def predict_bytes(self, raw_bytes):
+    def internal_benchmark(self) -> dict[str, Any]:
+        benchmark = self.metrics["internal_benchmark"]
+        return {
+            "label": "Internal development benchmark",
+            "samples": int(benchmark["n"]),
+            "accuracy": float(benchmark["accuracy"]),
+            "sensitivity": float(benchmark["sensitivity"]),
+            "specificity": float(benchmark["specificity"]),
+            "auroc": float(benchmark["roc_auc"]),
+            "f1": float(benchmark["f1"]),
+            "confusion_matrix": {
+                "tn": int(benchmark["tn"]),
+                "fp": int(benchmark["fp"]),
+                "fn": int(benchmark["fn"]),
+                "tp": int(benchmark["tp"]),
+            },
+        }
+
+    def predict_bytes(self, raw_bytes: bytes) -> dict[str, Any]:
         rgb = decode_rgb(raw_bytes)
         quality = quality_report(rgb)
         if not quality["accepted"]:
             return {
                 "decision": "recapture_required",
-                "quality": quality,
                 "screening_probability": None,
-                "warning": "Input quality failed. Do not return an anemia prediction.",
+                "operating_threshold": CORRECTED_OPERATING_THRESHOLD,
+                "uncertain": False,
+                "quality": quality,
+                "warning": WARNING,
             }
+        with self._execution_lock:
+            return self._predict_accepted(rgb, quality)
 
+    @torch.inference_mode()
+    def _predict_accepted(self, rgb: np.ndarray, quality: dict[str, Any]) -> dict[str, Any]:
         image = Image.fromarray(rgb)
-        b3_tensor = self.transform_b3(image).unsqueeze(0).to(self.device)
-        conv_tensor = self.transform_convnext(image).unsqueeze(0).to(self.device)
-        feature_raw = engineered_features(rgb)
-        feature_scaled = ((feature_raw - self.feature_mean) / self.feature_std).astype(
-            np.float32
-        )
+        efficientnet_tensor = self.efficientnet_transform(image).unsqueeze(0).to(self.device)
+        convnext_tensor = self.convnext_transform(image).unsqueeze(0).to(self.device)
+        vit_tensor = self.vit_transform(image).unsqueeze(0).to(self.device)
 
-        eff_embedding = self.efficientnet.encode(b3_tensor)
-        conv_embedding = self.convnext.encode(conv_tensor)
-        eff_logit = self.efficientnet.classify_embedding(eff_embedding)
-        conv_logit = self.convnext.classify_embedding(conv_embedding)
+        efficientnet_logit = float(self.efficientnet(efficientnet_tensor).item())
+        convnext_logit = float(self.convnext(convnext_tensor).item())
+        vit_logit = float(self.vit(vit_tensor).item())
+        logits = np.asarray([efficientnet_logit, convnext_logit, vit_logit])
+        if not np.isfinite(logits).all():
+            raise RuntimeError("A V4 base model produced NaN or infinity.")
 
-        if not all(
-            torch.isfinite(value).all()
-            for value in (eff_embedding, conv_embedding, eff_logit, conv_logit)
-        ):
-            raise RuntimeError("Base encoder produced NaN/Inf")
+        features = engineered_features(rgb)
+        standardized = ((features - self.feature_mean) / self.feature_std).astype(np.float32)
+        stacker_input = build_stacker_input(
+            efficientnet_logit, convnext_logit, vit_logit, standardized
+        )
+        scaled_input = self.stacker["scaler"].transform(stacker_input)
+        if np.asarray(scaled_input).shape != (1, 35) or not np.isfinite(scaled_input).all():
+            raise RuntimeError("The saved stacker scaler produced an invalid 35-value input.")
 
-        stacker_input = np.concatenate(
-            [
-                np.array([float(eff_logit.item()), float(conv_logit.item())]),
-                feature_scaled,
-            ]
-        ).reshape(1, -1)
-        stacker_input = self.stacker["scaler"].transform(stacker_input)
-        logistic_raw = self.stacker["model"].predict_proba(stacker_input)[:, 1]
-        logistic_probability = float(
-            apply_calibration(
-                logistic_raw, self.calibration["logistic_stacker"]
-            )[0]
+        raw_probability = float(self.stacker["model"].predict_proba(scaled_input)[0, 1])
+        if not np.isfinite(raw_probability):
+            raise RuntimeError("The logistic stacker produced a non-finite probability.")
+        clipped = float(np.clip(raw_probability, 1e-6, 1 - 1e-6))
+        raw_logit = np.log(clipped / (1 - clipped))
+        calibration = self.runtime["calibration"]
+        calibrated = float(
+            1
+            / (
+                1
+                + np.exp(
+                    -(
+                        float(calibration["coefficient"]) * raw_logit
+                        + float(calibration["intercept"])
+                    )
+                )
+            )
         )
+        if not np.isfinite(calibrated) or not 0 <= calibrated <= 1:
+            raise RuntimeError("Platt calibration produced an invalid probability.")
 
-        feature_tensor = torch.from_numpy(feature_scaled).unsqueeze(0).to(self.device)
-        gated_raw = []
-        gate_values = []
-        for head in self.gated_heads:
-            output, gates = head(eff_embedding, conv_embedding, feature_tensor)
-            gated_raw.append(float(torch.sigmoid(output).item()))
-            gate_values.append(gates.cpu().numpy()[0])
-        gated_probability = float(
-            apply_calibration(
-                [float(np.mean(gated_raw))],
-                self.calibration["regularized_gated_fusion"],
-            )[0]
-        )
-
-        probabilities = {
-            "logistic_stacker": logistic_probability,
-            "regularized_gated_fusion": gated_probability,
-        }
-        selected_name = self.runtime["selected_candidate"]
-        selected_probability = probabilities[selected_name]
-        selected_threshold = float(self.thresholds["selected_threshold"])
-        other_name = (
-            "regularized_gated_fusion"
-            if selected_name == "logistic_stacker"
-            else "logistic_stacker"
-        )
-        other_threshold = float(self.thresholds[other_name])
-        disagreement = (selected_probability >= selected_threshold) != (
-            probabilities[other_name] >= other_threshold
-        )
-        close = (
-            abs(selected_probability - selected_threshold)
-            <= float(self.thresholds["uncertainty_margin"])
-        )
-        if close or disagreement:
-            decision = "uncertain"
-        elif selected_probability >= selected_threshold:
-            decision = "higher_risk"
-        else:
-            decision = "lower_risk"
-
+        decision, uncertain = decision_from_probability(calibrated)
         return {
             "decision": decision,
-            "screening_probability": selected_probability,
-            "selected_model": selected_name,
-            "operating_threshold": selected_threshold,
-            "candidate_probabilities": probabilities,
-            "model_disagreement": bool(disagreement),
+            "screening_probability": calibrated,
+            "operating_threshold": CORRECTED_OPERATING_THRESHOLD,
+            "uncertain": uncertain,
             "quality": quality,
-            "average_gates": dict(
-                zip(
-                    ["efficientnet", "convnext", "colour_features"],
-                    np.mean(gate_values, axis=0).astype(float).tolist(),
-                )
-            ),
-            "warning": (
-                "Research screening result only; obtain a CBC/hemoglobin test and "
-                "professional evaluation for diagnosis."
-            ),
+            "warning": WARNING,
         }
 
-    def predict(self, roi_image_path):
-        """File-path convenience wrapper (CLI / debugging) around predict_bytes."""
-        return self.predict_bytes(Path(roi_image_path).read_bytes())
+
+_predictor: AnemiaScanV4Predictor | None = None
+_predictor_lock = threading.Lock()
 
 
-@lru_cache
-def get_predictor(device="cpu"):
-    """Loads the ~150MB of weights exactly once per process."""
-    return AnemiaScanV31Predictor(MODEL_ASSETS_DIR, device=device)
+def get_predictor(device: str = "auto") -> AnemiaScanV4Predictor:
+    global _predictor
+    if _predictor is None:
+        with _predictor_lock:
+            if _predictor is None:
+                _predictor = AnemiaScanV4Predictor(device=device)
+    return _predictor
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("roi_image")
-    parser.add_argument("--device", default=None)
-    arguments = parser.parse_args()
-    predictor = AnemiaScanV31Predictor(MODEL_ASSETS_DIR, device=arguments.device)
-    print(json.dumps(predictor.predict(arguments.roi_image), indent=2))
+def reset_predictor_for_tests() -> None:
+    global _predictor
+    with _predictor_lock:
+        _predictor = None

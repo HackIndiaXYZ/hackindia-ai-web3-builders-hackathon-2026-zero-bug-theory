@@ -1,116 +1,88 @@
 # AnemiaScan backend
 
-FastAPI service: screening commitments, MST Testnet anchoring, and
-CarePool/CarePass bookkeeping. See
-[`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) for the full architecture
-and privacy boundary. Standalone Python project — does not touch `src/`.
+FastAPI service for the AnemiaScan V4 inference endpoint, screening
+commitments, MST Testnet anchoring, and CarePool/CarePass bookkeeping.
 
 ## Setup
 
-Use **Python 3.11**, not 3.14: `web3`'s native dependencies (`ckzg`,
-`lru-dict` at some versions) don't have prebuilt wheels for 3.14 yet on
-Windows and fail to build without MSVC build tools. `py -3.11 -m venv .venv`
-sidesteps this entirely.
+Use Python 3.11. On Windows, from this directory:
 
-```bash
+```powershell
 py -3.11 -m venv .venv
-./.venv/Scripts/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
-./.venv/Scripts/pip install -r requirements.txt      # macOS/Linux: .venv/bin/pip
-cp .env.example .env
+.\.venv\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
+.\.venv\Scripts\pip.exe install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-Installing torch/torchvision first (from PyTorch's own CPU-only wheel
-index) keeps the install a few hundred MB instead of pulling a multi-GB
-CUDA build — order doesn't matter either way, `requirements.txt` pins the
-same versions.
+On macOS/Linux, replace `.venv\Scripts\` with `.venv/bin/`. Installing the
+CPU-only PyTorch wheels first avoids downloading a CUDA build. Set
+`ML_DEVICE=auto` (default), `cpu`, or `cuda`; `auto` selects CUDA only when it
+is available.
 
-Fill in `.env` with the values `contracts/`'s deploy/grant-roles scripts
-print (`MST_ANEMIA_REGISTRY_ADDRESS`, `MST_CARE_POOL_ADDRESS`,
-`MST_MOCK_MODEL_HASH`), and `MST_ATTESTER_PRIVATE_KEY` (reuse
-`contracts/.env.local`'s `PRIVATE_KEY` — that deployer key already holds
-every on-chain role from the constructor). All of that is optional for
-local dev — the app runs fully with the chain unconfigured (commitments
-are still computed and stored, just not anchored) — see
-[`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md).
+## Install the trusted V4 model
 
-### Real inference model
+Do not copy arbitrary checkpoints into the application. Run the installer once:
 
-`INFERENCE_PROVIDER=real` (the default) needs the AnemiaScan V3.1
-calibrated bundle in `app/ml/model_assets/` — gitignored, not part of this
-repo:
-
-```
-app/ml/model_assets/
-  runtime_config.json
-  calibration.json
-  thresholds.json
-  train_only_scalers.npz
-  stacking_model.joblib
-  anemiafusionnet_v3_1_gated.pth
-  base_models/
-    efficientnet_b3_best.pth
-    convnext_tiny_best.pth
+```powershell
+.\.venv\Scripts\python.exe scripts\install_v4_bundle.py G:\path\to\anemiascan_v4_eff_conv_vit_bundle.zip
 ```
 
-See `app/ml/model_assets/BUNDLE_README.md` (present once the bundle is
-placed there) for the model's own provenance, validation metrics, and
-caveats. Without these files present, startup logs a clear warning and
-`POST /registry/screenings` returns `503` until they're added — set
-`INFERENCE_PROVIDER=mock` to run without them (CI/offline dev; results are
-synthetic).
+It validates ZIP paths, CRCs, size, the runtime configuration, exact 35-value
+stacker order, corrected threshold, uncertainty margin, preprocessing, and
+benchmark metadata. It extracts only these files into the gitignored
+`app/ml/model_assets/` directory and records a deterministic content manifest:
 
-`requirements.txt` pins exact versions, not ranges, for the eth-*/web3
-stack — see the comment at its top and `app/chain.py`'s module docstring
-for why (a real, reproducible upstream bug: `mst-sdk-python`'s own
-dependency floor allows an `eth-account` version that doesn't have the
-attribute its signing code calls).
-
-## Run
-
-```bash
-./.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+```text
+base_models/efficientnet_b3_best.pth
+base_models/convnext_tiny_best.pth
+vit_b16_best.pth
+stacking_model.joblib
+train_only_scalers.npz
+runtime_config.json
+metrics.json
+inference.py
 ```
 
-Interactive API docs at `http://localhost:8000/docs`. `GET /health` does a
-live `eth_chainId` call and reports a mismatch rather than trusting the
-configured value — check it first if anything chain-related looks wrong.
+The runtime then verifies the manifest and strict-loads all three checkpoints.
+It never loads an uploaded pickle, joblib file, or checkpoint. The old
+`anemiafusionnet_v3_1_gated.pth` is not part of the V4 path.
 
-## Test
+## Inference flow and API
 
-```bash
-./.venv/Scripts/python -m pytest -v
+At startup, the process-wide thread-safe singleton loads EfficientNet-B3,
+ConvNeXt-Tiny, and ViT-B/16 in evaluation mode. Each accepted PNG/JPEG request
+is decoded through OpenCV and converted to RGB, quality-gated, transformed with
+the bundle's exact resize/crop and ImageNet normalization, and run under
+`torch.inference_mode()`. The three logits are followed by the exact 32
+standardized engineered features. The saved 35-input scaler/logistic stacker
+and Platt calibration produce the screening probability.
+
+```text
+POST /api/anemia/analyze
+Content-Type: multipart/form-data
+Field: image
 ```
 
-`tests/test_commitment.py` is the Python leg of the three-way commitment
-parity check (Solidity ground truth -> Python -> TypeScript) — see
-`contracts/README.md`'s "Golden commitment vector" section.
+The response uses stable camelCase fields and includes the decision, screening
+probability, corrected operating threshold, quality measurements, model
+version/hash, warning, and metrics read from `metrics.json` under the label
+`Internal development benchmark`. Quality failure returns
+`recapture_required` with no probability. The image is processed transiently
+and is not persisted by this endpoint.
 
-## What's real vs. mocked here
+`POST /registry/screenings` remains available for the existing commitment and
+MST flow. `INFERENCE_PROVIDER=mock` remains an explicit CI/offline option for
+that legacy registry route only; the public V4 analysis endpoint never returns
+mock medical results.
 
-| | |
-|---|---|
-| FastAPI, SQLAlchemy, commitment building | Real |
-| MST chain reads/writes (once configured) | Real transactions |
-| AI risk/recommendation scoring | **Real** by default (`INFERENCE_PROVIDER=real`) — the trained AnemiaScan V3.1 calibrated ensemble in `app/ml/`. Set `INFERENCE_PROVIDER=mock` for the deterministic synthetic provider (`app/inference.py`'s `MockInferenceProvider`, no model weights needed); its results carry `is_synthetic=True` and the DEMO MODE notice |
-| Sponsor/clinic wallet signing | **Backend-custodial for the hackathon** — see `app/chain.py`'s module docstring for exactly what a production build would change |
+## Run and test
 
-## Directory layout
-
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m pytest -q
 ```
-app/
-  main.py            FastAPI app, CORS, startup chain-id preflight, background reconciliation loop
-  config.py           env-driven settings
-  db.py / models.py   SQLAlchemy (SQLite by default; swap DATABASE_URL for Postgres, no code change)
-  commitment.py        ANEMIASCAN_SCREENING_COMMITMENT_V1 (Python leg)
-  carepass.py          ANEMIASCAN-CAREPASS|1|<token> encode/decode
-  chain.py             MST adapter — see its module docstring for the SDK bug workaround
-  inference.py          RealInferenceProvider + MockInferenceProvider, selected by INFERENCE_PROVIDER
-  ml/
-    predictor.py          AnemiaScan V3.1 model code (ported from the vendor bundle)
-    model_assets/         model weights + calibration/thresholds (gitignored, not in repo)
-  security.py           wallet challenge-response auth (sponsor/clinic only — patient stays walletless)
-  reconciliation.py      DB<->chain tx state machine recovery
-  routers/               health, auth, registry, carepool, audit
-tests/
-  test_commitment.py    three-way golden-vector parity check
-```
+
+Interactive docs are at `http://localhost:8000/docs`. `GET /health` checks the
+configured chain when MST settings are present. Chain addresses and signer
+configuration are optional for the non-persisting V4 analysis endpoint; see
+[`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) for that separate flow.

@@ -19,7 +19,7 @@ from .chain import ChainNotConfigured, get_chain_client
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .reconciliation import reconcile_pending
-from .routers import audit, auth, blockchain, carepool, health, registry
+from .routers import anemia, audit, auth, blockchain, carepool, health, registry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("anemiascan")
@@ -81,10 +81,10 @@ async def lifespan(app: FastAPI):
 
             provider = get_inference_provider(settings)
             await run_in_threadpool(provider.run, image_bytes=_WARMUP_IMAGE_BYTES)
-            logger.info("AnemiaScan V3.1 model loaded and warmed up (device=%s)", settings.ml_device)
+            logger.info("AnemiaScan V4 model loaded and warmed up (device=%s)", settings.ml_device)
         except Exception:  # noqa: BLE001 — must never crash startup; the endpoint will 503 until fixed
             logger.exception(
-                "Real inference model failed to load at startup — /registry/screenings will 503 until fixed"
+                "Real inference model failed to load at startup — V4 analysis routes will 503 until fixed"
             )
 
     task = asyncio.create_task(_reconciliation_loop())
@@ -98,8 +98,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AnemiaScan Proof-of-Care API",
-    description="Screening commitments, MST Testnet anchoring, and CarePool/CarePass bookkeeping.",
-    version="0.1.0",
+    description="AnemiaScan V4 screening, MST Testnet anchoring, and CarePool/CarePass bookkeeping.",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -113,6 +113,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(anemia.router)
 app.include_router(blockchain.router)
 app.include_router(auth.router)
 app.include_router(registry.router)
@@ -123,4 +124,3 @@ app.include_router(audit.router)
 @app.exception_handler(ChainNotConfigured)
 async def chain_not_configured_handler(request: Request, exc: ChainNotConfigured) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": f"MST chain not configured: {exc}"})
-

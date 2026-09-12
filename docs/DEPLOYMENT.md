@@ -1,12 +1,9 @@
 # AnemiaScan × MST — architecture, verification log, and deployment guide
 
 This documents the MST Blockchain integration built into `contracts/`,
-`backend/`, and `sdk/`. It supersedes assumptions in any prior planning
-document (including `deep-research-report.md`, which was written before
-this code existed and got several concrete details wrong — see
-"Corrections to the original plan" below). Nothing under `src/` was
-touched; the existing frontend continues to work unmodified while its own
-UI work is in progress.
+`backend/`, and `sdk/`, plus the privacy boundary where the AnemiaScan V4
+frontend and inference endpoint meet that existing flow. It supersedes
+assumptions in planning documents written before this code existed.
 
 ## What's real vs. mocked
 
@@ -18,17 +15,18 @@ UI work is in progress.
 | Commitment hash (`ANEMIASCAN_SCREENING_COMMITMENT_V1`) | Real, three-way verified (Solidity ground truth ↔ Python ↔ TypeScript) |
 | FastAPI backend, SQLAlchemy models | Real |
 | MST chain reads/writes | Real — end-to-end tested against a live EVM chain (see "Verification log") |
-| AI risk/recommendation scoring | **Synthetic.** No trained model exists yet. Every result carries `is_synthetic=True` and must show the DEMO MODE notice: *"DEMO MODE — AI model integration pending. This result is synthetic and must not be interpreted medically."* |
-| Sponsor/clinic wallet signing | **Backend-custodial for this build**, not BridgeKey-signed — see "Scope boundary: no UI changes" |
+| Patient V4 analysis (`POST /api/anemia/analyze`) | **Real.** Strict-loaded EfficientNet-B3 + ConvNeXt-Tiny + ViT-B/16, 32 engineered features, saved calibrated logistic stacker, and metrics from the trusted bundle |
+| Registry AI scoring (`POST /registry/screenings`) | **Real by default.** It uses the same V4 singleton; a clearly marked deterministic mock remains available only when `INFERENCE_PROVIDER=mock` is explicitly configured for CI/offline development |
+| Sponsor/clinic wallet signing | **Backend-custodial for this build**, not BridgeKey-signed — see the notes below |
 
-## Scope boundary: no UI changes
+## V4 integration boundary
 
-This pass deliberately touches nothing under `src/` (the frontend is being
-actively worked on elsewhere). Everything here is additive: three new
-top-level directories (`contracts/`, `backend/`, `sdk/`), each a
-self-contained project with its own dependencies, isolated from the root
-Vite/pnpm app. Confirmed with a full `pnpm run build` after every change
-(see "Non-breaking-changes check" below).
+The patient capture flow sends only the guided conjunctiva ROI to
+`POST /api/anemia/analyze`. The backend holds those bytes in memory for the
+request, does not write them to disk or the database, and returns the V4 score,
+quality result, provenance, warning, and internal benchmark. This analysis
+endpoint does not create an on-chain record. The separate registry route keeps
+the existing commitment/CarePool functionality available.
 
 One consequence: `CarePool.createPool` / `fundPool` (sponsor) and
 `redeemCarePass` (clinic) are meant, long-term, to be signed client-side by
@@ -173,11 +171,11 @@ and re-run both checks after any change to the encoding.
 | | CarePass hash/state | |
 | | Wallet addresses, tx history | | |
 
-Enforced independently at three layers: the Pydantic schemas
-(`backend/app/schemas.py` — no field for any of the left-hand column
-exists), the Solidity ABI (the contracts have no field for it either), and
-by construction (the backend never receives a raw image, only a
-client-computed digest).
+Enforced independently at three layers: the persistence schemas have no raw
+image field, the Solidity ABI has no raw image field, and both inference routes
+discard uploaded bytes after processing. `POST /api/anemia/analyze` is
+non-persisting; the registry route stores only a SHA-256 image digest and the
+coded result needed for its commitment.
 
 ## Deploying for real
 
@@ -202,10 +200,12 @@ To go from here to a real, judge-verifiable MST Testnet deployment:
    ```
 3. `npm run deploy:testnet` — deploys both contracts, writes
    `contracts/deployments.json`, prints the addresses for `backend/.env`.
-4. `npm run grant-roles:testnet` — registers the mock model, prints its
-   hash for `backend/.env`.
-5. Fill in `backend/.env`: the two contract addresses, the mock model
-   hash, and `MST_ATTESTER_PRIVATE_KEY` /
+4. Register the installed V4 manifest hash with `AnemiaRegistry.registerModel`
+   before anchoring real V4 screenings. If deliberately deploying the mock
+   CI/demo path instead, `npm run grant-roles:testnet` registers its mock model
+   and prints `MST_MOCK_MODEL_HASH`.
+5. Fill in `backend/.env`: the two contract addresses and
+   `MST_ATTESTER_PRIVATE_KEY` /
    `MST_ISSUER_PRIVATE_KEY` / `MST_CLINIC_PRIVATE_KEY` (all can reuse
    `contracts/.env.local`'s `PRIVATE_KEY` for a single-key hackathon demo —
    that key already holds every role from the constructor).
@@ -217,7 +217,7 @@ To go from here to a real, judge-verifiable MST Testnet deployment:
 ## Non-breaking-changes check
 
 ```bash
-pnpm run build   # from the repo root — unaffected; contracts/, backend/, sdk/ are isolated project trees
+corepack pnpm run build   # from the repo root
 ```
 
 Confirmed passing after this work. `contracts/` and `sdk/ts/` use `npm`
@@ -228,14 +228,14 @@ separate Python project (own `.venv`, gitignored).
 
 ## What's deliberately out of scope here
 
-- **BridgeKey / client-side wallet signing** — inherently frontend work;
-  see "Scope boundary" above. `/auth/challenge` + `/auth/verify` are ready
+- **BridgeKey / client-side wallet signing** — inherently frontend work.
+  `/auth/challenge` + `/auth/verify` are ready
   for it.
 - **Postgres + Alembic** — `backend/app/db.py` documents the swap
   (`DATABASE_URL`, same SQLAlchemy models); not wired up because SQLite +
   `create_all()` is enough for a hackathon build that isn't shipping to
   production, and Alembic migration authoring wasn't worth the time
   against everything else in this pass.
-- **Patient-facing UI wiring** (`/scan`, `/result`, `/proof`, `/verify`
-  routes calling this API) — not started, per the "no UI changes" scope
-  boundary for this pass.
+- **External clinical validation** — the values shown in the app are explicitly
+  labelled as an internal development benchmark and are not a clinical-accuracy
+  claim.
