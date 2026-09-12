@@ -1,199 +1,118 @@
 /* --------------------------------------------------------------------------
- * MeasureBars — the explainability primitive.
+ * SignalBars — the explainability primitive.
  * --------------------------------------------------------------------------
- * This component used to render the five "signals" of a local colour heuristic
- * (pallor, saturation, vascularity, …), each with a hand-picked weight and a
- * hand-picked polarity. That heuristic has been deleted: the browser computes
- * no medical quantity any more. Every number here is now something the SERVER
- * reported about the inference it actually ran.
+ * Renders `SignalBreakdown[]` as a ranked set of meters, ordered by how much
+ * each signal actually pushed the blended score (weight × concern), not by the
+ * raw reading.
  *
- * What it draws is a small set of meters, each with:
- *   - a fill, positioned on a track whose scale the builder decides,
- *   - an optional MARKER on the same track (a decision threshold, or the value
- *     an in-distribution capture is expected to produce), because a lone bar
- *     with no reference point tells a reader nothing, and
- *   - a plain-language hint that says what the number is and what it is not.
+ * The five signals do NOT share a polarity — a high `pallor` reading is the
+ * concerning direction while a high reading on the other four is reassuring —
+ * so every row states its direction explicitly and is tinted by concern rather
+ * than by magnitude. Getting that wrong would be actively misleading, which is
+ * why `signalConcern` lives here as the single place the polarity is encoded.
  *
- * The builders below are the only place these rows are constructed, so no
- * screen can quietly invent a quantity that the model never produced.
- *
- * Each row's hint opens on hover or focus and can be pinned open by click /
- * Enter / Space; the meter itself is an accessible progressbar via the shared
- * `Progress` primitive.
+ * Each row's plain-language hint opens on hover or focus and can be pinned open
+ * by click / Enter / Space; the meter itself is an accessible progressbar via
+ * the shared `Progress` primitive.
  * -------------------------------------------------------------------------- */
 
 import { useId, useMemo, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Minus, TrendingDown, TrendingUp } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { Progress } from '@/components/ui/progress'
-import { clamp, formatPercent, formatProbability, humaniseKey } from '@/src/lib/format'
+import { clamp } from '@/src/lib/format'
 import type { RiskToken } from '@/src/lib/risk-style'
-import type { GateReport, ModelOutput } from '@/src/lib/types'
+import type { SignalBreakdown, SignalKey } from '@/src/lib/types'
 
 /* -------------------------------------------------------------------------- */
-/* Row model                                                                  */
+/* Polarity + ranking                                                         */
 /* -------------------------------------------------------------------------- */
 
-export type MeasureTone = RiskToken | 'primary'
+/** Signals where a HIGH reading is the concerning direction. */
+const HIGH_IS_CONCERNING: ReadonlySet<SignalKey> = new Set<SignalKey>(['pallor'])
 
-export interface MeasureRow {
-  key: string
-  label: string
-  /** Optional short qualifier printed next to the label, e.g. 'selected'. */
-  tag?: string
-  /** 0..1 — where the fill ends on the track. */
-  fraction: number
-  /** The value as the reader should see it. Already formatted by the builder. */
-  readout: string
-  tone: MeasureTone
-  /** A reference mark on the same track: a threshold, or an expected value. */
-  marker?: { fraction: number; label: string }
-  /** What this number is, and what it is not. Plain language, never a claim. */
-  hint: string
+/**
+ * Convert a raw 0..100 reading into 0..100 "concern", matching the polarity the
+ * analyser blends with: pallor rises with concern, the other four fall with it.
+ */
+export function signalConcern(signal: SignalBreakdown): number {
+  const value = clamp(signal.value, 0, 100)
+  return HIGH_IS_CONCERNING.has(signal.key) ? value : 100 - value
 }
 
-const TONE_TEXT: Record<MeasureTone, string> = {
-  primary: 'text-primary',
+function toneForConcern(concern: number): RiskToken {
+  if (concern >= 62) return 'risk'
+  if (concern >= 38) return 'moderate'
+  return 'safe'
+}
+
+export interface RankedSignal {
+  signal: SignalBreakdown
+  /** 0..100 — how far this reading sits in the concerning direction. */
+  concern: number
+  /** Approximate points this signal added to the blended score. */
+  points: number
+  tone: RiskToken
+  /** True when a high reading is the worrying one. */
+  highIsConcerning: boolean
+}
+
+/** Sort by contribution to the score (weight × concern), strongest first. */
+export function rankSignals(signals: SignalBreakdown[]): RankedSignal[] {
+  return signals
+    .map((signal) => {
+      const concern = signalConcern(signal)
+      const weight = clamp(signal.weight, 0, 1)
+      return {
+        signal,
+        concern,
+        points: Math.round(weight * concern),
+        tone: toneForConcern(concern),
+        highIsConcerning: HIGH_IS_CONCERNING.has(signal.key),
+      }
+    })
+    .sort((a, b) => {
+      const byPoints = b.points - a.points
+      if (byPoints !== 0) return byPoints
+      return b.signal.weight - a.signal.weight
+    })
+}
+
+function readingWord(concern: number): string {
+  if (concern >= 62) return 'Needs attention'
+  if (concern >= 38) return 'Borderline'
+  return 'Reassuring'
+}
+
+const TONE_TEXT: Record<RiskToken, string> = {
   risk: 'text-risk',
   moderate: 'text-moderate',
   safe: 'text-safe',
 }
 
-/* -------------------------------------------------------------------------- */
-/* Builders — the only sanctioned sources of a row                            */
-/* -------------------------------------------------------------------------- */
-
-/**
- * What each candidate actually is. Keyed by the names the inference contract
- * uses; an unrecognised key falls back to a description that claims nothing,
- * because inventing an architecture for a model we do not recognise would be
- * exactly the sort of confident fiction this rewrite exists to remove.
- */
-const CANDIDATE_NOTES: Record<string, string> = {
-  logistic_stacker:
-    'A logistic regression stacked on top of the two image encoders’ outputs and the 32 engineered colour features, then Platt-calibrated so the number it emits behaves like a probability rather than a raw score.',
-  regularized_gated_fusion:
-    'A gated fusion head that decides per image how much to trust each encoder and the colour features, averaged across its ensemble and Platt-calibrated the same way.',
-}
-
-/**
- * One row per candidate model, each against its OWN threshold.
- *
- * The two candidates do not share a threshold — 0.2076 and 0.1855 — so a single
- * shared marker would misplace one of them. When the two land on opposite sides
- * of their respective thresholds the service reports `model_disagreement` and
- * the decision becomes `uncertain`; these rows are how that becomes visible.
- */
-export function candidateRows(model: ModelOutput): MeasureRow[] {
-  const entries = Object.entries(model.candidateProbabilities ?? {})
-  return entries.map(([key, raw]) => {
-    const probability = clamp(Number(raw), 0, 1)
-    const threshold = Number(model.candidateThresholds?.[key])
-    const hasThreshold = Number.isFinite(threshold)
-    const over = hasThreshold && probability >= threshold
-    const selected = key === model.selectedModel
-    return {
-      key,
-      label: humaniseKey(key),
-      tag: selected ? 'selected' : undefined,
-      fraction: probability,
-      readout: formatProbability(probability),
-      tone: over ? 'risk' : 'safe',
-      marker: hasThreshold
-        ? { fraction: clamp(threshold, 0, 1), label: `threshold ${formatProbability(threshold)}` }
-        : undefined,
-      hint: `${CANDIDATE_NOTES[key] ?? 'One of the candidate models the service scored this capture with.'} ${
-        hasThreshold
-          ? `Its own operating threshold is ${formatProbability(threshold)}, so this reading sits ${
-              over ? 'at or above' : 'below'
-            } it.`
-          : ''
-      }${
-        selected
-          ? ' This is the candidate the running configuration selects, so its reading is the headline probability.'
-          : ' It is scored alongside the selected candidate as a cross-check, and does not set the result on its own.'
-      }`,
-    }
-  })
-}
-
-/** Human labels for the three branches the gated fusion head weights. */
-const FUSION_BRANCH_NOTES: Record<string, string> = {
-  efficientnet: 'The EfficientNet-B3 image encoder.',
-  convnext: 'The ConvNeXt-Tiny image encoder.',
-  colour_features: 'The 32 engineered colour, texture and exposure statistics.',
-}
-
-/**
- * The fusion gate weights: how much the gated head leaned on each branch for
- * THIS image, averaged over its ensemble. They are softmax weights, so they sum
- * to 1 and a bar is genuinely a share.
- */
-export function fusionGateRows(model: ModelOutput): MeasureRow[] {
-  const entries = Object.entries(model.fusionGateWeights ?? {})
-  return entries.map(([key, raw]) => {
-    const weight = clamp(Number(raw), 0, 1)
-    return {
-      key,
-      label: humaniseKey(key),
-      fraction: weight,
-      readout: formatPercent(weight, 1),
-      tone: 'primary',
-      hint: `${FUSION_BRANCH_NOTES[key] ?? 'One branch of the gated fusion head.'} The gate produced this share for this particular capture; the three shares sum to 100%. A weight is an attention share inside one model, not evidence about you — it says where the model looked, never what it found.`,
-    }
-  })
-}
-
-/**
- * The in-distribution gate's budget against its limit.
- *
- * `distributionBudget` is the sum of squared z-scores across the 32 engineered
- * features, so an input that looks like the training ROIs lands near 32 and the
- * service refuses anything past `distributionBudgetLimit`. Showing the raw pair
- * is the honest way to say "this capture was inside the range the model was
- * fitted on, and by how much".
- */
-export function distributionBudgetRow(gate: GateReport): MeasureRow | null {
-  const limit = Number(gate.distributionBudgetLimit)
-  const budget = Number(gate.distributionBudget)
-  if (!Number.isFinite(limit) || limit <= 0 || !Number.isFinite(budget)) return null
-
-  const ratio = clamp(budget / limit, 0, 1)
-  const tone: MeasureTone = ratio >= 0.75 ? 'risk' : ratio >= 0.45 ? 'moderate' : 'safe'
-  // 32 features, each contributing an expected squared z-score of 1.
-  const expected = 32
-
-  return {
-    key: 'distribution-budget',
-    label: 'Distance from the training distribution',
-    fraction: ratio,
-    readout: `${budget.toFixed(1)} / ${limit.toFixed(0)}`,
-    tone,
-    marker:
-      expected < limit
-        ? { fraction: expected / limit, label: `typical ${expected}` }
-        : undefined,
-    hint: `The sum of squared z-scores across the 32 engineered features, measured against the statistics of the 648 training ROIs. A capture that looks like the training data lands near ${expected}; anything past ${limit.toFixed(
-      0,
-    )} is refused outright rather than scored. This describes the photograph’s similarity to the training set — not your health.`,
-  }
+const TONE_CHIP: Record<RiskToken, string> = {
+  risk: 'border-risk/25 bg-risk/10 text-risk',
+  moderate: 'border-moderate/25 bg-moderate/10 text-moderate-strong',
+  safe: 'border-safe/25 bg-safe/10 text-safe',
 }
 
 /* -------------------------------------------------------------------------- */
 /* Row                                                                        */
 /* -------------------------------------------------------------------------- */
 
-function MeasureBarRow({
-  row,
+function SignalRow({
+  ranked,
+  rank,
   open,
   pinned,
   reduceMotion,
   onPinnedChange,
   onHoverChange,
 }: {
-  row: MeasureRow
+  ranked: RankedSignal
+  rank: number
   /** Visually revealed — pinned, hovered or focused. */
   open: boolean
   /** Explicitly pinned by the user. This, and only this, is `aria-expanded`. */
@@ -202,8 +121,11 @@ function MeasureBarRow({
   onPinnedChange: (pinned: boolean) => void
   onHoverChange: (hovering: boolean) => void
 }) {
+  const { signal, concern, points, tone, highIsConcerning } = ranked
   const hintId = useId()
-  const pct = clamp(row.fraction, 0, 1) * 100
+  const value = Math.round(clamp(signal.value, 0, 100))
+  const weightPct = Math.round(clamp(signal.weight, 0, 1) * 100)
+  const DirectionIcon = highIsConcerning ? TrendingUp : TrendingDown
 
   return (
     <li
@@ -228,24 +150,35 @@ function MeasureBarRow({
         onBlur={() => onHoverChange(false)}
         className="ring-focus -m-1 flex w-full items-start gap-3 rounded-xl p-1 text-left"
       >
+        <span
+          aria-hidden="true"
+          className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-background text-[0.625rem] font-semibold text-muted-foreground tabular-nums"
+        >
+          {rank}
+        </span>
+
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-sm font-medium text-foreground">{row.label}</span>
-            {row.tag ? (
-              <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-primary">
-                {row.tag}
-              </span>
-            ) : null}
+            <span className="text-sm font-medium text-foreground">{signal.label}</span>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.625rem] font-semibold',
+                TONE_CHIP[tone],
+              )}
+            >
+              <DirectionIcon className="size-2.5" aria-hidden="true" />
+              {readingWord(concern)}
+            </span>
           </span>
-          {row.marker ? (
-            <span className="text-2xs text-muted-foreground tabular-nums">{row.marker.label}</span>
-          ) : null}
+          <span className="text-2xs text-muted-foreground">
+            {highIsConcerning ? 'Higher is concerning' : 'Higher is reassuring'} · weight{' '}
+            <span className="tabular-nums">{weightPct}%</span> · adds ≈
+            <span className="tabular-nums">{points}</span> pts
+          </span>
         </span>
 
         <span className="flex shrink-0 items-center gap-1.5">
-          <span className={cn('metric text-sm font-semibold tabular-nums', TONE_TEXT[row.tone])}>
-            {row.readout}
-          </span>
+          <span className={cn('metric text-sm font-semibold', TONE_TEXT[tone])}>{value}</span>
           <ChevronDown
             aria-hidden="true"
             className={cn(
@@ -256,18 +189,12 @@ function MeasureBarRow({
         </span>
       </button>
 
-      {/* The marker has to live OUTSIDE `Progress` — that element clips its
-          children so it can round the fill — hence the relative wrapper. */}
-      <div className="relative mt-2.5">
-        <Progress value={pct} tone={row.tone} label={`${row.label} reading`} className="h-1.5" />
-        {row.marker ? (
-          <span
-            aria-hidden="true"
-            className="absolute -top-1 h-3.5 w-px -translate-x-1/2 rounded-full bg-foreground/70"
-            style={{ left: `${clamp(row.marker.fraction, 0, 1) * 100}%` }}
-          />
-        ) : null}
-      </div>
+      <Progress
+        value={value}
+        tone={tone}
+        label={`${signal.label} reading`}
+        className="mt-2.5 h-1.5"
+      />
 
       {/* A single always-mounted panel: clipped when closed, so the hint text
           stays reachable by assistive tech without duplicating the node. */}
@@ -279,9 +206,10 @@ function MeasureBarRow({
         className="overflow-hidden"
       >
         <p className="pt-2.5 text-xs leading-relaxed text-pretty text-muted-foreground">
-          {row.hint}
+          {signal.hint}
         </p>
       </motion.div>
+
     </li>
   )
 }
@@ -290,20 +218,18 @@ function MeasureBarRow({
 /* Component                                                                  */
 /* -------------------------------------------------------------------------- */
 
-interface MeasureBarsProps {
-  rows: MeasureRow[]
-  /** Shown when there is nothing to draw. Say why, do not draw a placeholder. */
-  emptyLabel?: string
+interface SignalBarsProps {
+  signals: SignalBreakdown[]
   className?: string
 }
 
-export function MeasureBars({ rows, emptyLabel, className }: MeasureBarsProps) {
+export function SignalBars({ signals, className }: SignalBarsProps) {
   const reduceMotion = useReducedMotion() ?? false
+  const ranked = useMemo(() => rankSignals(signals), [signals])
   const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [hovered, setHovered] = useState<string | null>(null)
-  const keys = useMemo(() => rows.map((row) => row.key), [rows])
 
-  if (!rows.length) {
+  if (!ranked.length) {
     return (
       <p
         className={cn(
@@ -311,12 +237,12 @@ export function MeasureBars({ rows, emptyLabel, className }: MeasureBarsProps) {
           className,
         )}
       >
-        {emptyLabel ?? 'The server reported no figures for this scan.'}
+        No signal readings were recorded for this scan.
       </p>
     )
   }
 
-  const allPinned = pinned.size === rows.length
+  const allPinned = pinned.size === ranked.length
 
   const togglePin = (key: string, next: boolean) => {
     setPinned((current) => {
@@ -330,28 +256,39 @@ export function MeasureBars({ rows, emptyLabel, className }: MeasureBarsProps) {
   return (
     <div className={cn('flex flex-col gap-3', className)}>
       <ol className="flex list-none flex-col gap-2.5">
-        {rows.map((row) => (
-          <MeasureBarRow
-            key={row.key}
-            row={row}
-            open={pinned.has(row.key) || hovered === row.key}
-            pinned={pinned.has(row.key)}
+        {ranked.map((item, index) => (
+          <SignalRow
+            key={item.signal.key}
+            ranked={item}
+            rank={index + 1}
+            open={pinned.has(item.signal.key) || hovered === item.signal.key}
+            pinned={pinned.has(item.signal.key)}
             reduceMotion={reduceMotion}
-            onPinnedChange={(next) => togglePin(row.key, next)}
+            onPinnedChange={(next) => togglePin(item.signal.key, next)}
             onHoverChange={(hovering) =>
-              setHovered((current) => (hovering ? row.key : current === row.key ? null : current))
+              setHovered((current) =>
+                hovering ? item.signal.key : current === item.signal.key ? null : current,
+              )
             }
           />
         ))}
       </ol>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground">
+          <Minus className="size-3" aria-hidden="true" />
+          Ranked by contribution to the score
+        </p>
         <button
           type="button"
-          onClick={() => setPinned(allPinned ? new Set<string>() : new Set(keys))}
+          onClick={() =>
+            setPinned(
+              allPinned ? new Set<string>() : new Set(ranked.map((item) => item.signal.key)),
+            )
+          }
           className="ring-focus rounded-full border border-border bg-background/60 px-2.5 py-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
         >
-          {allPinned ? 'Hide explanations' : 'Explain every figure'}
+          {allPinned ? 'Hide explanations' : 'Explain every signal'}
         </button>
       </div>
     </div>

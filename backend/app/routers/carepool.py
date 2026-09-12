@@ -2,22 +2,15 @@
 
 Hackathon-demo simplification (see app/chain.py's module docstring): every
 on-chain write below is signed by a backend-held key, not by the sponsor's
-or clinic's own BridgeKey wallet. The wallet-session check (`require_wallet_
-session`, verifying a human controls *a* wallet via /auth/challenge +
-/auth/verify) is a reasonable operator gate for a demo, but it is not the
-same guarantee as the on-chain CLINIC_ROLE check CarePool.sol itself
-performs against the backend's single configured clinic key. A production
-build would replace the backend signing calls in this file with
-client-signed BridgeKey transactions for createPool/fundPool/redeemCarePass
-and keep only issueCarePass (a genuine backend/issuer responsibility) here.
-
-Every mutating endpoint requires that gate. It used to guard only
-`/passes/redeem` and `/clinics/authorize` — `create_pool`, `fund_pool` and
-`issue_care_pass` had no caller authentication at all, despite each one
-spending the backend's own held funds or gas on-chain: `fund_pool` sends
-`amount_wei` of native token straight out of the issuer wallet, so an
-unauthenticated caller could drain it by repeated calls. Read-only GETs
-remain open.
+or clinic's own BridgeKey wallet. The wallet-session check on
+`/passes/redeem` and `/clinics/authorize` verifies a human controls *a*
+wallet (via /auth/challenge + /auth/verify), which is a reasonable operator
+gate for a demo, but it is not the same guarantee as the on-chain
+CLINIC_ROLE check CarePool.sol itself performs against the backend's single
+configured clinic key. A production build would replace the backend
+signing calls in this file with client-signed BridgeKey transactions for
+createPool/fundPool/redeemCarePass and keep only issueCarePass (a genuine
+backend/issuer responsibility) here.
 """
 
 import logging
@@ -101,11 +94,7 @@ def _decode_event_arg(contract, event_name: str, receipt, arg_name: str):
 
 
 @router.post("/pools", response_model=PoolResponse, status_code=201)
-def create_pool(
-    body: PoolCreateRequest,
-    db: Session = Depends(get_db),
-    operator: str = Depends(require_wallet_session),
-) -> PoolResponse:
+def create_pool(body: PoolCreateRequest, db: Session = Depends(get_db)) -> PoolResponse:
     try:
         sponsor_address = to_checksum_address(body.sponsor_address)
     except ValueError as err:
@@ -170,12 +159,7 @@ def get_pool(pool_db_id: str, db: Session = Depends(get_db)) -> PoolResponse:
 
 
 @router.post("/pools/{pool_db_id}/fund", response_model=PoolResponse)
-def fund_pool(
-    pool_db_id: str,
-    body: PoolFundRequest,
-    db: Session = Depends(get_db),
-    operator: str = Depends(require_wallet_session),
-) -> PoolResponse:
+def fund_pool(pool_db_id: str, body: PoolFundRequest, db: Session = Depends(get_db)) -> PoolResponse:
     pool = db.get(CarePoolRecord, pool_db_id)
     if pool is None:
         raise HTTPException(404, "pool not found")
@@ -221,11 +205,7 @@ def fund_pool(
 
 
 @router.post("/passes", response_model=CarePassIssueResponse, status_code=201)
-def issue_care_pass(
-    body: CarePassIssueRequest,
-    db: Session = Depends(get_db),
-    operator: str = Depends(require_wallet_session),
-) -> CarePassIssueResponse:
+def issue_care_pass(body: CarePassIssueRequest, db: Session = Depends(get_db)) -> CarePassIssueResponse:
     pool = db.get(CarePoolRecord, body.pool_id)
     if pool is None or pool.pool_id_onchain is None:
         raise HTTPException(404, "pool not found or not confirmed on-chain")

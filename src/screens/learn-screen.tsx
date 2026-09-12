@@ -3,7 +3,7 @@
  * --------------------------------------------------------------------------
  * A long-form, genuinely informative read covering: what anaemia is, why the
  * palpebral conjunctiva is the site an image-based screen would choose, what
- * the colour of that tissue can and cannot show, how to take a capture worth
+ * each of the five measured signals means, how to take a capture worth
  * scoring, the hard limits of screening from a photo, and when to stop reading
  * and see a clinician.
  *
@@ -12,10 +12,6 @@
  *   - Eyelid-pallor screening is described as an active research area in
  *     general terms; no specific study is referenced or implied.
  *   - Nothing is framed as diagnosis, and no dosing advice is given.
- *   - Nothing claims to know WHY the model scored a photo the way it did. The
- *     tissue properties below are what conjunctival screening depends on and
- *     what lighting ruins — they are not per-signal readings the app emits,
- *     because it emits one calibrated probability and nothing else.
  * -------------------------------------------------------------------------- */
 
 import { motion, useReducedMotion, type Variants } from 'motion/react'
@@ -55,7 +51,7 @@ import { Stat } from '@/components/ui/stat'
 const CONTENTS = [
   { id: 'anaemia', label: 'What anaemia is' },
   { id: 'why-conjunctiva', label: 'Why the eyelid' },
-  { id: 'signals', label: 'What the colour shows' },
+  { id: 'signals', label: 'The five signals' },
   { id: 'good-capture', label: 'A good capture' },
   { id: 'limits', label: 'Hard limits' },
   { id: 'clinician', label: 'See a clinician' },
@@ -72,12 +68,12 @@ const SYMPTOMS = [
   'Brittle nails, hair shedding, or a sore tongue',
 ] as const
 
-const TISSUE_PROPERTIES = [
+const SIGNALS = [
   {
     icon: Droplet,
     name: 'Pallor',
     reading: 'How washed-out the tissue looks',
-    body: 'The headline property, and the one the whole method rests on. A well-perfused conjunctiva is a deep, wet pink-red; as haemoglobin falls, the same tissue trends toward pale pink, then toward the colour of the sclera behind it.',
+    body: 'The headline signal. A well-perfused conjunctiva is a deep, wet pink-red; as haemoglobin falls, the same tissue trends toward pale pink, then toward the colour of the sclera behind it. The app measures how far the sampled region sits from that saturated reference.',
     confound: 'Overexposure and a cool white balance both flatten colour and can mimic pallor.',
   },
   {
@@ -91,21 +87,21 @@ const TISSUE_PROPERTIES = [
     icon: Contrast,
     name: 'Saturation',
     reading: 'Colour intensity, independent of brightness',
-    body: 'Saturation is the most lighting-robust of the colour readings, because it describes how far the hue is from grey rather than how bright the frame is. It is the property that best survives an imperfect exposure.',
+    body: 'Saturation is the most lighting-robust of the colour readings, because it describes how far the hue is from grey rather than how bright the frame is. It is the signal that best survives an imperfect exposure.',
     confound: 'Beauty filters, HDR and any auto-enhance step rewrite saturation before the app ever sees it.',
   },
   {
     icon: ScanLine,
     name: 'Texture',
     reading: 'How much fine vascular detail is visible',
-    body: 'A healthy conjunctiva shows a visible network of fine vessels. When that pattern flattens out, the fine detail goes with it. It is a useful cross-check on colour, because it is ruined by different things than colour is.',
+    body: 'A healthy conjunctiva shows a visible network of fine vessels. Local pixel variance stands in for that detail: when the vascular pattern flattens out, texture drops. It is a useful cross-check on the colour readings, because it fails for different reasons than they do.',
     confound: 'Motion blur, a smudged lens or a low-resolution crop all read as lost texture.',
   },
   {
     icon: Sun,
     name: 'Illumination',
     reading: 'Whether the frame was lit well enough to trust',
-    body: 'Not a health property at all — a referee. The server measures brightness, focus and clipping before the model sees anything, and that measurement is the capture-quality score you get back. A frame that fails those checks is refused with a named reason rather than scored anyway.',
+    body: 'Not a health signal at all — a referee. Illumination sets how much weight the other four readings deserve, and it is what drives the confidence figure down on a marginal capture. Below a floor, the scan is refused rather than scored.',
     confound: 'Nothing confounds it; it exists precisely to catch the frames that would confound everything else.',
   },
 ] as const
@@ -127,7 +123,7 @@ const CAPTURE_AVOID = [
 const LIMITS = [
   'It cannot measure haemoglobin. Colour is a correlate, not a value, and this build has not been validated against laboratory results.',
   'It sees one small patch of tissue at one moment, under one lighting condition, through one unknown camera pipeline.',
-  'Mild or early anaemia can look entirely normal in a photo, so a lower-risk result is not a clearance.',
+  'Mild or early anaemia can look entirely normal in a photo, so a Low Risk result is not a clearance.',
   'It cannot tell you why. Iron deficiency, blood loss, B12 or folate deficiency, chronic disease and inherited conditions can look alike from the outside.',
   'It cannot see anything about the eye itself. Conjunctivitis, an infection or a recent injury will change tissue colour for reasons unrelated to blood.',
   'It is not a medical device, has no regulatory clearance, and is not a substitute for examination or testing.',
@@ -251,7 +247,7 @@ export function LearnScreen({ onBack, onStart }: LearnScreenProps) {
 
             <p className="max-w-2xl text-base leading-relaxed text-pretty text-muted-foreground">
               This is the long version: the condition being screened for, the reason the inside of
-              the lower lid is the site to look at, what the colour of that tissue can show, and —
+              the lower lid is the site to look at, what each measured signal actually means, and —
               just as importantly — the things an image can never show. About a seven-minute read.
             </p>
           </div>
@@ -430,26 +426,26 @@ export function LearnScreen({ onBack, onStart }: LearnScreenProps) {
                   and validation against actual laboratory values.
                 </p>
                 <p>
-                  AnemiaScan does none of that validation. Its model was trained on eyelid images,
-                  but not on your camera in your light, which is why it reports a screening
-                  probability and a capture-quality score rather than a haemoglobin value — and why
-                  it says, on every screen, that a blood test is the only real answer.
+                  AnemiaScan does none of that validation. It runs a transparent heuristic on an
+                  unknown camera in unknown light, which is why it reports a band and a confidence
+                  rather than a number — and why it says, on every screen, that a blood test is the
+                  only real answer.
                 </p>
               </CardContent>
             </Card>
           </div>
         </Section>
 
-        {/* ---- 3. what the colour shows -------------------------------- */}
+        {/* ---- 3. the five signals ------------------------------------- */}
         <Section
           id="signals"
           eyebrow="Chapter 03"
-          title="What the colour of that tissue can show"
-          lead="The app does not hand you five readings, and it cannot tell you which pixel decided anything — a trained network does not work that way. What follows is the five tissue properties conjunctival screening depends on, and the everyday things that ruin each one."
+          title="The five signals, and what each one means"
+          lead="Your result is not a single opaque number. Five readings are measured separately, each normalised to a 0–100 scale, each carrying a visible weight — and each with its own way of being wrong."
           variants={variants}
         >
           <ul className="flex flex-col gap-4">
-            {TISSUE_PROPERTIES.map(({ icon: Icon, name, reading, body, confound }, i) => (
+            {SIGNALS.map(({ icon: Icon, name, reading, body, confound }, i) => (
               <li key={name}>
                 <Card className="card-hover">
                   <CardContent className="flex flex-col gap-4 py-6 sm:flex-row sm:gap-6">
@@ -459,7 +455,7 @@ export function LearnScreen({ onBack, onStart }: LearnScreenProps) {
                       </span>
                       <div className="flex flex-col gap-0.5">
                         <span className="metric text-2xs text-muted-foreground">
-                          Property {String(i + 1).padStart(2, '0')}
+                          Signal {String(i + 1).padStart(2, '0')}
                         </span>
                         <h3 className="text-base leading-snug font-semibold tracking-tight text-foreground">
                           {name}
@@ -493,29 +489,23 @@ export function LearnScreen({ onBack, onStart }: LearnScreenProps) {
 
           <Card className="mt-5">
             <CardHeader>
-              <CardTitle>How a photo becomes an outcome</CardTitle>
+              <CardTitle>How the readings become a band</CardTitle>
               <CardDescription>
-                Your capture is uploaded over HTTPS and checked before it is scored: the server
-                locates the conjunctiva, measures brightness, focus and clipping, and refuses
-                anything sitting too far from what the model was trained on. What survives is
-                scored once, and the calibrated probability that comes back is judged against a
-                fixed operating threshold.
+                The five signals are blended by weight into a single 0–100 screening score. The score
+                maps to one of three bands, and capture quality is tracked separately as confidence
+                — so a borderline photo lowers certainty instead of quietly inventing it.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-x-10 gap-y-5">
-                <Stat label="Lower risk" value="Below" hint="The probability sits below the threshold" />
+                <Stat label="Low risk" value="Band 1" hint="No pallor pattern detected in this capture" />
                 <Stat
-                  label="Higher risk"
-                  value="Above"
-                  hint="Above the threshold — a reason to get a blood test"
+                  label="Moderate risk"
+                  value="Band 2"
+                  hint="Some signals below this screen’s unremarkable range"
                 />
-                <Stat
-                  label="Uncertain"
-                  value="Too close"
-                  hint="Inside the margin around the threshold, or the two candidate models disagreed"
-                />
-                <Stat label="Refused" value="Recapture" hint="Sent back with named reasons, so you know what to fix" />
+                <Stat label="Elevated risk" value="Band 3" hint="A pallor pattern worth testing for" />
+                <Stat label="Too dark" value="Refused" hint="Scored frames must clear a light floor" />
               </div>
             </CardContent>
           </Card>
@@ -674,9 +664,8 @@ export function LearnScreen({ onBack, onStart }: LearnScreenProps) {
               </CardHeader>
               <CardContent className="flex flex-col gap-3 text-sm leading-relaxed text-muted-foreground">
                 <p>
-                  Your screening probability, the outcome it mapped to, the capture-quality score
-                  and the dates of your scans — all of which the result and history screens show
-                  you.
+                  Your screening band and confidence, the dates of your scans, and the signals that
+                  stood out — all of which the result and history screens show you.
                 </p>
                 <p>
                   Your symptoms and roughly when they started, any heavy bleeding, your diet, and any

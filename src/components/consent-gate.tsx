@@ -25,7 +25,6 @@ import { Check, Lock, ScanEye, ShieldCheck, Stethoscope } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/src/components/app-logo'
-import { recordConsentAcknowledgement } from '@/src/lib/consent'
 
 const STORAGE_KEY = 'anemiascan.consent.v1'
 
@@ -36,7 +35,7 @@ const POINTS = [
   {
     icon: ScanEye,
     title: 'What it does',
-    body: 'It uploads a photo of your inner lower eyelid, finds the conjunctiva in it, and scores that patch of tissue with a trained model — giving a screening probability and one of three outcomes: lower risk, higher risk, or uncertain.',
+    body: 'It measures colour and texture signals in a photo of your inner lower eyelid and turns them into an anaemia risk band with a confidence figure.',
   },
   {
     icon: Lock,
@@ -67,13 +66,6 @@ function rememberConsent(): void {
   } catch {
     /* private mode or a full quota — the notice simply shows again next visit */
   }
-  // Mint the consent binding HERE, at the moment of acknowledgement, so the
-  // consent_hash sent with every screening is tied to when this person
-  // actually agreed. Left to `getConsentHash()` it would be minted lazily on
-  // the first scan instead, stamping the wrong moment. (The hash used to be a
-  // sha256 of a compile-time constant string — identical for every user and
-  // every scan, so it attested nothing at all.)
-  recordConsentAcknowledgement()
 }
 
 export function ConsentGate({ onAccept }: { onAccept?: () => void }) {

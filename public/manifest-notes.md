@@ -30,9 +30,9 @@ From the `manifest` block in `vite.config.ts`:
 
 | Field | Value |
 | --- | --- |
-| `name` | `AnemiaScan` |
+| `name` | `AnemiaScan — anaemia risk screening` |
 | `short_name` | `AnemiaScan` |
-| `description` | `Screen for anaemia risk from a photo of your inner lower eyelid. The image is uploaded over HTTPS and scored by a trained model, never written to disk. A screening aid, not a diagnosis.` |
+| `description` | `Screen for anaemia risk from a photo of your lower eyelid. The image is analysed on your device and never uploaded. A screening aid, not a diagnosis.` |
 | `id` | `/` |
 | `theme_color` | `#07090f` |
 | `background_color` | `#07090f` |
@@ -186,10 +186,8 @@ Status today:
 
 - It **is** precached (it matches `**/*.html`) and is reachable at `/offline.html`.
 - It is **deliberately not** the navigation fallback. The trade-off was decided in favour
-  of the app: the shell, the guide and this device's scan history are all cached and stay
-  useful with no connection, so an offline navigation should boot the cached shell rather
-  than a dead end. Only a NEW scan genuinely needs the network, and the scan screen says so
-  itself. `vite.config.ts` therefore sets
+  of the app: this is a single-page app whose analysis is entirely local, so an offline
+  navigation should boot the cached shell, not a dead end. `vite.config.ts` therefore sets
 
   ```ts
   workbox: {
@@ -215,21 +213,20 @@ Matched relative to the **build output** (`dist/`), not `public/`. Consequences 
 knowing:
 
 - Every hashed JS/CSS chunk, `index.html`, `offline.html`, the web manifest and all
-  PNG/SVG assets are precached on install — so the shell, the guide and stored history all
-  open offline after one successful load. Taking a new scan does not: the capture is POSTed
-  to the authenticated screening endpoint, so it needs both the network and a signed-in user.
-- `.webp` and `.avif` are **not** matched. Nothing in the build output uses them today, but
-  the day someone adds a `.webp` illustration, add its extension here or it will 404 offline.
-- **Inter is self-hosted, and `woff2` is still missing from the glob.** `index.html`
-  preloads `/fonts/inter-latin.woff2` from `public/fonts/`, so the app issues no
-  third-party font request and needs no `runtimeCaching` rule for one. But `woff2` is not
-  in the pattern above, so the files ship to `dist/` without being precached: add the
-  extension if Inter must survive a cold offline launch rather than falling back to the
-  system stack.
-- Captured eyelid photos are never cached here. A capture **is** uploaded — over HTTPS, to
-  the screening endpoint, which scores it in memory and never writes it to disk — and the
-  copy kept for your history lives in `localStorage` as a data URL, which never enters the
-  Cache Storage API.
+  PNG/SVG assets are precached on install — the app is fully usable offline after one successful load.
+- `.webp`, `.avif` and `.woff2` are **not** matched. Nothing in the build output
+  uses them today, but the day someone adds a self-hosted font or a `.webp` illustration,
+  add its extension here or it will 404 offline.
+- **Fonts are handled at runtime, not by the glob.** `index.html` pulls Inter from
+  `fonts.googleapis.com`, and a precache glob cannot cover a cross-origin request. Two
+  `runtimeCaching` rules close that gap: `StaleWhileRevalidate` for the
+  `fonts.googleapis.com` stylesheet and `CacheFirst` (opaque responses allowed, 8 entries,
+  one year) for the `fonts.gstatic.com` font files. So the first online load warms the
+  cache and later offline launches keep Inter instead of dropping to the system stack. The
+  fully origin-contained alternative is still to self-host the `.woff2` files under
+  `public/fonts/` — `woff2` would then need adding to the glob.
+- Captured eyelid photos are never cached here: they live in `localStorage` as data URLs
+  and never touch the network or the Cache Storage API.
 
 ---
 

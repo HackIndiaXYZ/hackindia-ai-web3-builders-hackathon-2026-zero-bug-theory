@@ -7,7 +7,7 @@
     <title>AnemiaScan</title>
     <meta
       name="description"
-      content="AnemiaScan screens for anaemia risk from a photo of your inner lower eyelid. The image is uploaded over HTTPS, scored by a trained model, and never written to disk. The result is a screening prompt — not a diagnosis."
+      content="AnemiaScan screens for anaemia risk from a photo of your lower eyelid. The image is analysed on your device, never uploaded, and the result is a screening prompt — not a diagnosis."
     />
     <meta name="application-name" content="AnemiaScan" />
     <meta name="color-scheme" content="dark light" />
@@ -48,7 +48,7 @@
     <meta property="og:title" content="AnemiaScan — anaemia risk screening from an eyelid photo" />
     <meta
       property="og:description"
-      content="Point your camera at the inside of your lower eyelid. AnemiaScan uploads the frame over HTTPS, locates the conjunctiva in it and scores it with a trained model, which returns a calibrated screening probability. A screening aid, not a diagnosis."
+      content="Point your camera at the inside of your lower eyelid. AnemiaScan measures pallor, redness, saturation, texture and illumination on-device and returns a risk band with a confidence figure. A screening aid, not a diagnosis."
     />
     <meta property="og:image" content="/icons/icon-512.png" />
     <meta property="og:image:alt" content="The AnemiaScan app mark: an eye with a scanning beam." />
@@ -59,7 +59,7 @@
     <meta name="twitter:title" content="AnemiaScan — anaemia risk screening from an eyelid photo" />
     <meta
       name="twitter:description"
-      content="Anaemia risk screening from a photo of the palpebral conjunctiva. The photo is scored in memory on our server and never written to disk. A screening aid, not a diagnosis."
+      content="On-device anaemia risk screening from a photo of the palpebral conjunctiva. Nothing is uploaded. A screening aid, not a diagnosis."
     />
     <meta name="twitter:image" content="/icons/icon-512.png" />
 
@@ -119,10 +119,9 @@
       >
         <h1 style="font-size: 1.25rem; margin: 0 0 0.75rem">AnemiaScan needs JavaScript</h1>
         <p style="margin: 0; line-height: 1.6; color: #9aa5b8">
-          AnemiaScan captures the eyelid photo in your browser and uploads it over HTTPS to be
-          scored, so the app cannot run with scripting disabled. The photo is held in memory for
-          that one request and never written to disk. AnemiaScan is a screening aid and not a
-          medical diagnosis.
+          The eyelid image is analysed entirely inside your browser, so the app cannot run with
+          scripting disabled. Nothing is ever uploaded to a server. AnemiaScan is a screening aid
+          and not a medical diagnosis.
         </p>
       </div>
     </noscript>

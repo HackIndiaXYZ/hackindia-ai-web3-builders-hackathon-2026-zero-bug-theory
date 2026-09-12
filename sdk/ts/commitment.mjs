@@ -26,7 +26,7 @@ const TYPES = [
   "bytes32", // modelHash
   "uint8", // riskCode
   "uint8", // recommendationCode
-  "uint16", // probabilityBps
+  "uint16", // confidenceBps
   "uint16", // qualityBps
   "bytes32", // consentHash
   "uint64", // capturedAt
@@ -42,7 +42,7 @@ const abiCoder = AbiCoder.defaultAbiCoder();
  * @param {string} fields.modelHash
  * @param {number} fields.riskCode
  * @param {number} fields.recommendationCode
- * @param {number} fields.probabilityBps
+ * @param {number} fields.confidenceBps
  * @param {number} fields.qualityBps
  * @param {string} fields.consentHash
  * @param {number|bigint} fields.capturedAt
@@ -57,7 +57,7 @@ export function buildScreeningCommitment(fields) {
     fields.modelHash,
     fields.riskCode,
     fields.recommendationCode,
-    fields.probabilityBps,
+    fields.confidenceBps,
     fields.qualityBps,
     fields.consentHash,
     fields.capturedAt,

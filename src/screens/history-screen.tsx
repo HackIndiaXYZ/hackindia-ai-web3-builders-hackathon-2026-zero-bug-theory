@@ -3,15 +3,11 @@
  * --------------------------------------------------------------------------
  * A single scan is a snapshot; the point of this screen is direction. It opens
  * with the trend, then the summary statistics, then the individual scans —
- * filterable by outcome, each one openable, each one deletable, with a two-step
+ * filterable by band, each one openable, each one deletable, with a two-step
  * confirmation on anything destructive.
  *
- * These ROWS have never left the device: the whole screen is a read of one
- * localStorage key, it needs no connection, and "Clear all" genuinely deletes
- * it. The photos the rows describe are a different matter — each one was
- * uploaded over HTTPS to be scored, held in memory for that single request and
- * never written to disk on our side. The copies kept here are the only ones
- * that persist anywhere.
+ * Nothing here has ever left the device: the whole screen is a read of one
+ * localStorage key, and "Clear all" genuinely deletes it.
  * -------------------------------------------------------------------------- */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -42,6 +38,7 @@ import { Separator } from '@/components/ui/separator'
 import { Stat } from '@/components/ui/stat'
 import { TrendChart } from '@/src/components/trend-chart'
 import { formatDateTime, formatRelativeTime } from '@/src/lib/format'
+import { historyStats } from '@/src/lib/history'
 import { riskAdvice, riskClasses, riskColorToken } from '@/src/lib/risk-style'
 import type { RiskLevel, ScanAnalysis } from '@/src/lib/types'
 
@@ -51,22 +48,18 @@ import type { RiskLevel, ScanAnalysis } from '@/src/lib/types'
 
 type BandFilter = 'all' | RiskLevel
 
-/* The model's three outcomes, not bands on a scale. `Uncertain` is a real
-   answer — the probability landed inside the margin around the operating
-   threshold, or the two candidate models disagreed — so it gets a filter of
-   its own rather than being quietly folded into a middle band. */
 const FILTERS: ReadonlyArray<{ id: BandFilter; label: string }> = [
   { id: 'all', label: 'All scans' },
-  { id: 'Lower risk', label: 'Lower' },
-  { id: 'Higher risk', label: 'Higher' },
-  { id: 'Uncertain', label: 'Uncertain' },
+  { id: 'Low Risk', label: 'Low' },
+  { id: 'Moderate Risk', label: 'Moderate' },
+  { id: 'Elevated Risk', label: 'Elevated' },
 ]
 
 const EMPTY_REASONS = [
   {
     icon: TrendingDown,
     title: 'Direction beats a single number',
-    body: 'One probability can be a lighting artefact. Three taken in similar light start to describe a direction you can actually act on.',
+    body: 'One score can be a lighting artefact. Three scores taken in similar light start to describe a direction you can actually act on.',
   },
   {
     icon: LockKeyhole,
@@ -76,7 +69,7 @@ const EMPTY_REASONS = [
   {
     icon: Camera,
     title: 'Thirty scans, eight photos',
-    body: 'The newest thirty scans keep their result and the newest eight keep their photo, so the record stays small and fast.',
+    body: 'The newest thirty scans keep their readings and the newest eight keep their photo, so the record stays small and fast.',
   },
 ] as const
 
@@ -89,7 +82,7 @@ function trendCopy(trend: number, count: number): { label: string; hint: string 
   if (trend <= -3) {
     return {
       label: `${trend}`,
-      hint: 'Your latest scan came in below your earlier average — a lower probability is the reassuring direction for this screen, not evidence that your haemoglobin changed.',
+      hint: 'Your latest scan came in below your earlier average — lower scores are the reassuring direction for this screen, not evidence that your haemoglobin changed.',
     }
   }
   if (trend >= 3) {
@@ -156,17 +149,17 @@ function HistoryRow({
                 tone.text,
               )}
             >
-              {Math.round(scan.screeningProbability * 100)}
-              <span className="text-[0.625rem] font-medium opacity-70">%</span>
+              {scan.riskScore}
+              <span className="text-[0.625rem] font-medium opacity-70">/100</span>
             </span>
             <span className="truncate text-sm font-medium text-foreground">{scan.riskLevel}</span>
             {isLatest ? <Badge variant="secondary">Latest</Badge> : null}
           </span>
           {/* Two lines, not one truncated line: at 390px the row has roughly
-              188px of text width, which clipped "quality NN/100" — the one
-              number that says whether the capture was readable at all. */}
+              188px of text width, which clipped "confidence NN/100" — the one
+              number that tells the user whether the reading is trustworthy. */}
           <span className="text-2xs text-muted-foreground">
-            {formatRelativeTime(scan.createdAt)} · quality {Math.round(scan.captureQuality)}/100
+            {formatRelativeTime(scan.createdAt)} · confidence {scan.confidence}/100
           </span>
           <span className="truncate text-2xs text-muted-foreground">{stamp}</span>
         </span>
@@ -239,42 +232,12 @@ export function HistoryScreen({
     () => [...items].sort((a, b) => b.createdAt - a.createdAt),
     [items],
   )
-  /* Summarised here rather than through historyStats(): every figure on this
-     screen is the server's calibrated probability rendered as a percentage, not
-     the 0–100 "screening score" the deleted local heuristic used to emit. */
-  const stats = useMemo(() => {
-    const empty = {
-      count: 0,
-      average: 0,
-      latest: null as number | null,
-      trend: 0,
-      bestLevel: null as RiskLevel | null,
-    }
-    if (!ordered.length) return empty
-
-    const mean = (values: number[]) =>
-      Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
-    const percents = ordered.map((scan) => Math.round(scan.screeningProbability * 100))
-    const earlier = percents.slice(1)
-
-    let lowest = ordered[0]
-    for (const scan of ordered) {
-      if (scan.screeningProbability < lowest.screeningProbability) lowest = scan
-    }
-
-    return {
-      count: ordered.length,
-      average: mean(percents),
-      latest: percents[0],
-      trend: earlier.length ? percents[0] - mean(earlier) : 0,
-      bestLevel: lowest.riskLevel,
-    }
-  }, [ordered])
+  const stats = useMemo(() => historyStats(ordered), [ordered])
   const counts = useMemo(() => {
     const map: Record<RiskLevel, number> = {
-      'Lower risk': 0,
-      'Higher risk': 0,
-      Uncertain: 0,
+      'Low Risk': 0,
+      'Moderate Risk': 0,
+      'Elevated Risk': 0,
     }
     for (const scan of ordered) map[scan.riskLevel] += 1
     return map
@@ -349,9 +312,9 @@ export function HistoryScreen({
   const trendTone =
     stats.count < 2 ? 'text-muted-foreground' : stats.trend > 2 ? 'text-risk' : stats.trend < -2 ? 'text-safe' : 'text-muted-foreground'
 
-  const higherRiskCount = counts['Higher risk']
-  const latestHigherRisk = ordered[0]?.riskLevel === 'Higher risk'
-  const showClinicianCallout = higherRiskCount > 0 || latestHigherRisk
+  const elevatedCount = counts['Elevated Risk']
+  const latestElevated = ordered[0]?.riskLevel === 'Elevated Risk'
+  const showClinicianCallout = elevatedCount > 0 || latestElevated
 
   return (
     <div className="flex flex-1 flex-col">
@@ -383,8 +346,8 @@ export function HistoryScreen({
             </h1>
             <p className="max-w-2xl text-sm leading-relaxed text-pretty text-muted-foreground sm:text-base">
               {ordered.length
-                ? `${ordered.length} ${ordered.length === 1 ? 'scan' : 'scans'} stored in this browser, and readable with or without a connection. Screening probabilities are only meaningful in series — compare like with like, in similar light, days apart.`
-                : 'Nothing stored yet. Every scan you take is saved here, in this browser only, so you can watch the direction rather than a single number.'}
+                ? `${ordered.length} ${ordered.length === 1 ? 'scan' : 'scans'} stored on this device. Screening scores are only meaningful in series — compare like with like, in similar light, days apart.`
+                : 'Nothing stored yet. Every scan you take is saved here, on this device only, so you can watch the direction rather than a single number.'}
             </p>
           </div>
 
@@ -394,7 +357,7 @@ export function HistoryScreen({
               Stored on this device
             </Badge>
             {stats.bestLevel ? (
-              <Badge variant="secondary">Lowest outcome recorded: {stats.bestLevel}</Badge>
+              <Badge variant="secondary">Lowest band recorded: {stats.bestLevel}</Badge>
             ) : null}
           </div>
         </div>
@@ -421,9 +384,9 @@ export function HistoryScreen({
                     No scans yet
                   </h2>
                   <p className="max-w-md text-sm leading-relaxed text-balance text-muted-foreground">
-                    A scan takes about thirty seconds: good light, lower lid gently pulled down, one
-                    steady frame, then a moment while the server scores it. Your first one becomes
-                    the baseline everything after it is read against.
+                    A scan takes about twenty seconds: good light, lower lid gently pulled down, one
+                    steady frame. Your first one becomes the baseline everything after it is read
+                    against.
                   </p>
                 </div>
 
@@ -476,10 +439,9 @@ export function HistoryScreen({
             <motion.div variants={variants} initial="hidden" animate="show">
               <Card>
                 <CardHeader>
-                  <CardTitle>Probability over time</CardTitle>
+                  <CardTitle>Score over time</CardTitle>
                   <CardDescription>
-                    Lower is the reassuring direction. Hover, tap or use the arrow keys to read any
-                    single scan.
+                    Lower is better. Hover, tap or use the arrow keys to read any single scan.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -495,12 +457,12 @@ export function HistoryScreen({
                   <Stat label="Scans" value={`${stats.count}`} hint="Kept on this device" />
                   <Stat
                     label="Average"
-                    value={`${stats.average}%`}
-                    hint="Mean screening probability across every stored scan"
+                    value={`${stats.average}/100`}
+                    hint="Mean score across every stored scan"
                   />
                   <Stat
                     label="Latest"
-                    value={stats.latest === null ? '—' : `${stats.latest}%`}
+                    value={stats.latest === null ? '—' : `${stats.latest}/100`}
                     hint={ordered[0] ? formatRelativeTime(ordered[0].createdAt) : undefined}
                   />
                   <div className="flex min-w-0 flex-col gap-1">
@@ -543,7 +505,7 @@ export function HistoryScreen({
                 </h2>
                 <div
                   role="group"
-                  aria-label="Filter scans by outcome"
+                  aria-label="Filter scans by risk band"
                   className="flex flex-wrap items-center gap-1.5"
                 >
                   <ListFilter
@@ -574,7 +536,7 @@ export function HistoryScreen({
                 </div>
               </div>
 
-              {/* This screen renders outcomes, an average and a trend, so the
+              {/* This screen renders bands, an average and a trend, so the
                   clinician path has to exist here too — not only on the result
                   screen the user may never scroll back to. */}
               {showClinicianCallout ? (
@@ -587,12 +549,12 @@ export function HistoryScreen({
                   </span>
                   <div className="flex min-w-0 flex-col gap-1">
                     <p className="text-sm leading-snug font-medium text-foreground">
-                      {latestHigherRisk
-                        ? 'Your most recent scan came back as Higher risk.'
-                        : `${higherRiskCount} of your stored ${higherRiskCount === 1 ? 'scan' : 'scans'} came back as Higher risk.`}
+                      {latestElevated
+                        ? 'Your most recent scan landed in the Elevated band.'
+                        : `${elevatedCount} of your stored ${elevatedCount === 1 ? 'scan sits' : 'scans sit'} in the Elevated band.`}
                     </p>
                     <p className="text-xs leading-relaxed text-muted-foreground">
-                      {riskAdvice('Higher risk')[0]} A photograph cannot confirm or rule out
+                      {riskAdvice('Elevated Risk')[0]} A colour statistic cannot confirm or rule out
                       anaemia, whichever direction this list is moving.
                     </p>
                   </div>
@@ -616,7 +578,7 @@ export function HistoryScreen({
               ) : (
                 <div className="flex flex-col items-start gap-3 rounded-2xl border border-dashed border-border bg-card/40 px-4 py-6">
                   <p className="text-sm text-muted-foreground">
-                    No stored scans came back with this outcome.
+                    No stored scans landed in this band.
                   </p>
                   <Button
                     variant="outline"
@@ -632,7 +594,7 @@ export function HistoryScreen({
               <p className="inline-flex items-start gap-2 text-2xs leading-relaxed text-muted-foreground">
                 <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
                 Opening a scan restores its full result and insights. Photos are kept only for the
-                newest eight scans; older entries keep their result but drop the image.
+                newest eight scans; older entries keep every reading but drop the image.
               </p>
 
               {/* Every other destination carries this line. A screen of colour
@@ -641,8 +603,8 @@ export function HistoryScreen({
               <p className="inline-flex items-start gap-2 text-2xs leading-relaxed text-muted-foreground">
                 <ShieldAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
                 AnemiaScan is a screening aid — not a diagnosis and not a haemoglobin measurement.
-                These probabilities describe photographs, not your blood. Only a blood test can
-                confirm anaemia.
+                These scores describe photographs, not your blood. Only a blood test can confirm
+                anaemia.
               </p>
             </motion.section>
 

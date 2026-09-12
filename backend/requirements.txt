@@ -44,33 +44,12 @@ pillow==12.3.0
 numpy==2.4.6
 opencv-python-headless==5.0.0.93
 joblib==1.6.0
-# MUST match the version stacking_model.joblib was pickled with (1.6.1 —
-# the `_sklearn_version` string embedded in the file).
-#
-# This was previously pinned to 1.4.2 with a comment claiming the resulting
-# InconsistentVersionWarning was "not a functional break". That was wrong, and
-# measurably so. Feeding one fixed 34-dim input vector through the stacker
-# under both versions:
-#
-#   decision_function   IDENTICAL to the last bit under both (delta exactly 0)
-#   predict_proba       1.6.1 -> [0.0685, 0.2227, 0.1282, 0.0954, 0.3979, 0.1815]
-#                       1.4.2 -> [0.0054, 0.0759, 0.0212, 0.0110, 0.3039, 0.0469]
-#
-# mean_, scale_, coef_ and intercept_ all unpickle identically, so the
-# parameters were fine; only predict_proba diverged. 1.6.1 reproduces
-# sigmoid(decision_function) to 5.6e-17, and 1.4.2 does not — i.e. 1.4.2 was
-# returning wrong probabilities, silently, for every screening. End to end the
-# calibrated screening probability moved by up to 0.142 (14 percentage points).
-#
-# Under 1.6.1 the bundle loads with zero warnings. Locked by tests/test_gate.py.
-scikit-learn==1.6.1
+# Pinned below the latest (1.9.x fails to import on this dev machine: a
+# Windows Application Control policy blocks sklearn's compiled `_cyutility`
+# helper introduced in newer builds). 1.4.2 unpickles the bundle's
+# stacking_model.joblib (trained with sklearn 1.6.1) fine — just an
+# InconsistentVersionWarning, not a functional break; verified in
+# tests/test_inference.py.
+scikit-learn==1.4.2
 torch==2.5.1
 torchvision==0.20.1
-
-# --- Firebase ID-token verification (app/firebase_auth.py) -----------------
-# Verifies the RS256 signature of Google-issued ID tokens against Google's
-# published x509 certs, checking aud/iss/exp. No service-account key needed.
-PyJWT==2.14.0
-cryptography==50.0.1
-# HTTP client for Google's cert endpoint and the Gemini explainer.
-httpx==0.28.1

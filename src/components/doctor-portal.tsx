@@ -13,7 +13,7 @@ export function DoctorPortal({ reports, onBack, onSaveAdvice }: { reports: Docto
   return <div className="min-h-dvh bg-background text-foreground"><header className="border-b border-border bg-card"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Stethoscope className="h-5 w-5" /></div><div><p className="font-semibold tracking-tight">AnemiaScan Doctor Portal</p><p className="text-xs text-muted-foreground">Prototype · local demo data</p></div></div><Button variant="outline" size="sm" onClick={onBack}><ArrowLeft className="h-4 w-4" /> Patient experience</Button></div></header>
     <main className="mx-auto max-w-7xl px-5 py-7"><div className="mb-7"><p className="text-sm font-medium text-primary">Clinical review workspace</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Reports routed directly to the doctor</h1><p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">Review AI-assisted screenings, add clinician guidance, and keep the doctor as the decision maker. This is not a diagnostic or prescribing tool.</p></div>
       <div className="mb-6 grid gap-3 sm:grid-cols-3"><Metric icon={<ClipboardList />} label="Reports received" value={reports.length} detail="Submitted from patient flow" /><Metric icon={<Clock3 />} label="Awaiting review" value={awaiting} detail="Requires clinician attention" /><Metric icon={<CheckCircle2 />} label="Reviewed" value={reports.length - awaiting} detail="Doctor guidance saved" /></div>
-      <div className="grid gap-6 lg:grid-cols-[minmax(260px,.85fr)_minmax(0,1.8fr)]"><section className="rounded-2xl border border-border bg-card"><div className="border-b border-border px-5 py-4"><h2 className="font-semibold">Doctor review queue</h2><p className="mt-1 text-xs text-muted-foreground">New patient scans appear here instantly.</p></div>{reports.length ? <div className="divide-y divide-border">{reports.map((report) => <button key={report.id} onClick={() => setSelectedId(report.id)} className={cn('w-full p-4 text-left transition hover:bg-muted/60', selected?.id === report.id && 'bg-primary/5')}><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{report.patientLabel}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(report.submittedAt).toLocaleString()}</p></div><Status status={report.status} /></div><p className={cn('mt-3 text-sm font-semibold', riskColorToken(report.analysis.riskLevel) === 'risk' ? 'text-risk' : riskColorToken(report.analysis.riskLevel) === 'moderate' ? 'text-moderate' : 'text-safe')}>{report.analysis.riskLevel} · p={report.analysis.screeningProbability.toFixed(3)}</p></button>)}</div> : <EmptyQueue />}</section>
+      <div className="grid gap-6 lg:grid-cols-[minmax(260px,.85fr)_minmax(0,1.8fr)]"><section className="rounded-2xl border border-border bg-card"><div className="border-b border-border px-5 py-4"><h2 className="font-semibold">Doctor review queue</h2><p className="mt-1 text-xs text-muted-foreground">New patient scans appear here instantly.</p></div>{reports.length ? <div className="divide-y divide-border">{reports.map((report) => <button key={report.id} onClick={() => setSelectedId(report.id)} className={cn('w-full p-4 text-left transition hover:bg-muted/60', selected?.id === report.id && 'bg-primary/5')}><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{report.patientLabel}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(report.submittedAt).toLocaleString()}</p></div><Status status={report.status} /></div><p className={cn('mt-3 text-sm font-semibold', riskColorToken(report.analysis.riskLevel) === 'risk' ? 'text-risk' : riskColorToken(report.analysis.riskLevel) === 'moderate' ? 'text-moderate' : 'text-safe')}>{report.analysis.riskLevel} · {report.analysis.riskScore}%</p></button>)}</div> : <EmptyQueue />}</section>
         <section>{selected ? <ReportDetail report={selected} onSave={onSaveAdvice} /> : <div className="flex min-h-[360px] flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card p-8 text-center"><FileText className="h-8 w-8 text-muted-foreground" /><h2 className="mt-4 font-semibold">No reports yet</h2><p className="mt-2 max-w-sm text-sm text-muted-foreground">Complete a patient scan, then select “Send for review” on the result screen. The report will route here immediately.</p></div>}</section></div></main></div>
 }
 
@@ -48,7 +48,7 @@ function ReportDetail({ report, onSave }: { report: DoctorReport; onSave: (id: s
             <Status status={saved ? 'Reviewed' : 'Awaiting Review'} />
           </div>
         </div>
-
+        
         {report.patientProfile && (
           <div className="mt-6 rounded-xl border border-border bg-background p-4 text-sm">
             <h3 className="font-semibold mb-2">Patient Profile</h3>
@@ -63,15 +63,9 @@ function ReportDetail({ report, onSave }: { report: DoctorReport; onSave: (id: s
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <Info label="AI screening result" value={report.analysis.riskLevel} tone={token} />
-          <Info label="Calibrated probability" value={report.analysis.screeningProbability.toFixed(3)} />
-          <Info label="Capture quality" value={`${report.analysis.captureQuality}/100`} />
+          <Info label="Screening probability" value={`${report.analysis.riskScore}%`} />
+          <Info label="Image brightness" value={`${Math.round(report.analysis.brightness)}/255`} />
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          Decision threshold {report.analysis.modelOutput.operatingThreshold.toFixed(4)}, chosen for high
-          sensitivity rather than balanced accuracy — a probability above it means "worth confirming", not
-          "likely anaemic". Model {report.analysis.modelOutput.modelVersion}.
-          {report.analysis.modelOutput.modelDisagreement ? ' The two candidate models disagreed on this capture.' : ''}
-        </p>
         <div className="mt-5 rounded-xl border border-moderate/40 bg-moderate/10 p-3 text-xs leading-relaxed text-moderate">
           AI-assisted screening result only — not a medical diagnosis. Clinical confirmation, such as CBC testing, may be required at the doctor’s discretion.
         </div>
@@ -97,15 +91,15 @@ function ReportDetail({ report, onSave }: { report: DoctorReport; onSave: (id: s
           </div>
         </div>
         <div className="mt-4 flex gap-3">
-          <Button
-            variant={assessment === 'Safe' ? 'default' : 'outline'}
+          <Button 
+            variant={assessment === 'Safe' ? 'default' : 'outline'} 
             className={assessment === 'Safe' ? 'bg-safe hover:bg-safe/90 text-white border-safe' : ''}
             onClick={() => { setAssessment('Safe'); setSaved(false) }}
           >
             Mark as Safe
           </Button>
-          <Button
-            variant={assessment === 'Unsafe' ? 'default' : 'outline'}
+          <Button 
+            variant={assessment === 'Unsafe' ? 'default' : 'outline'} 
             className={assessment === 'Unsafe' ? 'bg-risk hover:bg-risk/90 text-white border-risk' : ''}
             onClick={() => { setAssessment('Unsafe'); setSaved(false) }}
           >

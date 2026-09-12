@@ -22,40 +22,10 @@ class Settings(BaseSettings):
     # "real" runs the AnemiaScan V3.1 calibrated bundle (app/ml/); "mock" uses
     # the deterministic synthetic provider and needs no model weights.
     inference_provider: str = "real"
-    # Optional override for the real model's on-chain model_hash. Empty falls
-    # back to inference.real_model_hash(), which is keccak256 of the installed
-    # bundle's sha256 manifest (app/ml/manifest.py) — i.e. derived from the
-    # weights, not from a fixed text tag.
+    # Optional override for the real model's on-chain model_hash; empty
+    # falls back to inference.REAL_MODEL_HASH (a fixed, computed constant).
     mst_real_model_hash: str = ""
     ml_device: str = "cpu"
-    # Refuse to anchor a screening whose model hash is not registered/active on
-    # AnemiaRegistry, rather than broadcasting a transaction that reverts with
-    # ModelNotFound and charging gas for it.
-    require_registered_model: bool = True
-
-    # --- uploads -----------------------------------------------------------
-    # Neither FastAPI nor Starlette caps a FILE part (the 1MB max_part_size
-    # applies only to non-file fields), so a 28MB upload was accepted.
-    max_upload_bytes: int = 12 * 1024 * 1024
-    allowed_image_types: str = "image/jpeg,image/png,image/webp,image/heic,image/heif"
-
-    @property
-    def allowed_image_type_list(self) -> list[str]:
-        return [t.strip().lower() for t in self.allowed_image_types.split(",") if t.strip()]
-
-    # --- auth (Firebase ID tokens) -----------------------------------------
-    # Must match the frontend's VITE_FIREBASE_PROJECT_ID; it is the `aud` claim
-    # every accepted ID token has to carry.
-    # Verification is unconditional: there is deliberately no "disable auth"
-    # switch, because a screening endpoint that can be opened by an env var is
-    # one bad deploy away from being open. Tests substitute the dependency via
-    # FastAPI's dependency_overrides instead, which cannot leak to production.
-    firebase_project_id: str = ""
-
-    # --- Gemini explainer (optional) ---------------------------------------
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
-    gemini_timeout_seconds: float = 20.0
 
     mst_attester_private_key: str = ""
     mst_issuer_private_key: str = ""
@@ -80,3 +50,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

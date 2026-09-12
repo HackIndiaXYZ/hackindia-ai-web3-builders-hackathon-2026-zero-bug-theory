@@ -54,7 +54,7 @@ const CLAIMS: TrustClaim[] = [
   {
     icon: ShieldCheck,
     title: 'Screening, never a diagnosis',
-    body: 'The result is a calibrated probability, the threshold it was judged against, and what it cannot see. A blood test is the real answer.',
+    body: 'The result is a risk band with its confidence shown, plus what it cannot see. A blood test is the real answer.',
   },
 ]
 
@@ -95,9 +95,9 @@ export function TrustStrip({ className }: { className?: string }) {
             </h2>
           </div>
           <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-            The result comes from a real trained AI model on our server: the photo goes up over
-            HTTPS, is scored in memory and is never written to disk. Your scan history stays in
-            this browser, where it reads offline and wipes in one tap.
+            The result comes from a real trained AI model on our server, run securely and never
+            stored — with a lightweight colour and texture estimate running alongside it in this
+            page for instant, offline-capable signal readings.
           </p>
         </div>
       </div>
