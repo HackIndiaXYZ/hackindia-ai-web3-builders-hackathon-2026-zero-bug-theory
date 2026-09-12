@@ -16,6 +16,7 @@
     "clsx": "^2.1.1",
     "firebase": "^12.19.0",
     "lucide-react": "^1.16.0",
+    "motion": "^13.2.0",
     "react": "^19",
     "react-dom": "^19",
     "shadcn": "^4.11.0",

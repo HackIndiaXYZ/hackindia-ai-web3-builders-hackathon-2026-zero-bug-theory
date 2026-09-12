@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     mst_care_pool_address: str = ""
     mst_mock_model_hash: str = ""
 
+    # "real" runs the AnemiaScan V3.1 calibrated bundle (app/ml/); "mock" uses
+    # the deterministic synthetic provider and needs no model weights.
+    inference_provider: str = "real"
+    # Optional override for the real model's on-chain model_hash; empty
+    # falls back to inference.REAL_MODEL_HASH (a fixed, computed constant).
+    mst_real_model_hash: str = ""
+    ml_device: str = "cpu"
+
     mst_attester_private_key: str = ""
     mst_issuer_private_key: str = ""
     mst_clinic_private_key: str = ""

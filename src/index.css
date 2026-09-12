@@ -2,44 +2,103 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+/* Inter, self-hosted. Downloaded from Google Fonts (OFL-1.1) so the app makes
+   no third-party request at runtime and keeps its typography offline. */
+
+/* latin-ext */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @custom-variant dark (&:is(.dark *));
 
+/* ==========================================================================
+   AnemiaScan design system
+   --------------------------------------------------------------------------
+   :root  = light palette      .dark = dark palette (deep blue-black + teal)
+   Every token below is exposed to Tailwind through the @theme inline block,
+   so `bg-card`, `text-muted-foreground`, `border-risk/30`, `text-chart-3`
+   and friends all resolve per-theme with no extra work.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Theme namespace — colours, radii, shadows, easing, type scale
+   -------------------------------------------------------------------------- */
+
 @theme inline {
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
+  /* surfaces */
   --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  /* brand + intent */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  /* lines + rings */
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* screening semantics */
   --color-risk: var(--risk);
   --color-risk-foreground: var(--risk-foreground);
-  --color-safe: var(--safe);
   --color-moderate: var(--moderate);
+  --color-moderate-foreground: var(--moderate-foreground);
+  /* AA-safe amber for small text on its own tint — see the token definitions */
+  --color-moderate-strong: var(--moderate-strong);
+  --color-safe: var(--safe);
+  --color-safe-foreground: var(--safe-foreground);
+
+  /* data visualisation */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  /* sidebar (kept for shadcn compatibility) */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* radii — the scale is tuned for cards, so small icon chips get their own
+     FIXED tokens instead of inheriting a card-sized corner. A 28-44px box with
+     a 20-36px radius renders as a circle, which erases the chip language. */
+  --radius-chip-sm: 0.625rem;
+  --radius-chip: 0.75rem;
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -47,79 +106,587 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* elevation — theme aware, use as `shadow-soft` / `shadow-lift` / `shadow-glow` */
+  --shadow-soft: var(--elev-1);
+  --shadow-lift: var(--elev-2);
+  --shadow-glow: var(--elev-glow);
+  --shadow-inset-hairline: var(--elev-hairline);
 }
 
-:root {
-  color-scheme: dark;
-  --background: oklch(0.155 0.014 260);
-  --foreground: oklch(0.97 0.005 260);
-  --card: oklch(0.195 0.016 260);
-  --card-foreground: oklch(0.97 0.005 260);
-  --popover: oklch(0.195 0.016 260);
-  --popover-foreground: oklch(0.97 0.005 260);
-  --primary: oklch(0.78 0.135 174);
-  --primary-foreground: oklch(0.145 0.02 260);
-  --secondary: oklch(0.26 0.018 260);
-  --secondary-foreground: oklch(0.97 0.005 260);
-  --muted: oklch(0.235 0.016 260);
-  --muted-foreground: oklch(0.66 0.02 260);
-  --accent: oklch(0.28 0.05 174);
-  --accent-foreground: oklch(0.9 0.08 174);
-  --destructive: oklch(0.685 0.19 32);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.78 0.135 174 / 50%);
-  --risk: oklch(0.685 0.19 32);
-  --risk-foreground: oklch(0.145 0.02 260);
-  --safe: oklch(0.78 0.135 174);
-  --moderate: oklch(0.78 0.15 85);
-  --chart-1: oklch(0.78 0.135 174);
-  --chart-2: oklch(0.685 0.19 32);
-  --chart-3: oklch(0.7 0.12 250);
-  --chart-4: oklch(0.6 0.02 260);
-  --chart-5: oklch(0.4 0.02 260);
-  --radius: 1.25rem;
-  --sidebar: oklch(0.195 0.016 260);
-  --sidebar-foreground: oklch(0.97 0.005 260);
-  --sidebar-primary: oklch(0.78 0.135 174);
-  --sidebar-primary-foreground: oklch(0.145 0.02 260);
-  --sidebar-accent: oklch(0.26 0.018 260);
-  --sidebar-accent-foreground: oklch(0.97 0.005 260);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.78 0.135 174 / 50%);
+@theme {
+  /* typography ----------------------------------------------------------- */
+  --font-sans:
+    'Inter', 'InterVariable', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'SF Mono', 'JetBrains Mono', Menlo,
+    Consolas, 'Liberation Mono', monospace;
+
+  /* a real, mobile-first type scale.
+     text-2xs .. text-xl are body sizes; display-* are hero sizes that
+     already carry their own tracking + weight. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1.3;
+  --text-2xs--letter-spacing: 0.01em;
+
+  --text-display-xs: 1.375rem;
+  --text-display-xs--line-height: 1.18;
+  --text-display-xs--letter-spacing: -0.018em;
+  --text-display-xs--font-weight: 600;
+
+  --text-display-sm: 1.75rem;
+  --text-display-sm--line-height: 1.12;
+  --text-display-sm--letter-spacing: -0.022em;
+  --text-display-sm--font-weight: 600;
+
+  --text-display: 2.25rem;
+  --text-display--line-height: 1.06;
+  --text-display--letter-spacing: -0.028em;
+  --text-display--font-weight: 600;
+
+  --text-display-lg: 2.875rem;
+  --text-display-lg--line-height: 1.02;
+  --text-display-lg--letter-spacing: -0.032em;
+  --text-display-lg--font-weight: 700;
+
+  --text-display-xl: 3.75rem;
+  --text-display-xl--line-height: 0.98;
+  --text-display-xl--letter-spacing: -0.038em;
+  --text-display-xl--font-weight: 700;
+
+  /* easing --------------------------------------------------------------- */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-swift: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* motion durations available as `duration-quick` etc. */
+  --animate-duration-quick: 160ms;
 }
+
+/* --------------------------------------------------------------------------
+   2. LIGHT palette
+   -------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+
+  --background: oklch(0.986 0.003 250);
+  --foreground: oklch(0.215 0.024 262);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.205 0.024 262);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.205 0.024 262);
+
+  --primary: oklch(0.49 0.102 182);
+  --primary-foreground: oklch(0.995 0.004 180);
+
+  --secondary: oklch(0.955 0.008 250);
+  --secondary-foreground: oklch(0.27 0.028 262);
+
+  --muted: oklch(0.959 0.007 250);
+  --muted-foreground: oklch(0.475 0.024 258);
+
+  --accent: oklch(0.947 0.031 182);
+  --accent-foreground: oklch(0.37 0.079 184);
+
+  --destructive: oklch(0.535 0.196 27);
+  --destructive-foreground: oklch(0.995 0.008 27);
+
+  --border: oklch(0.3 0.028 262 / 12%);
+  --input: oklch(0.3 0.028 262 / 18%);
+  --ring: oklch(0.49 0.102 182 / 45%);
+
+  --risk: oklch(0.545 0.198 28);
+  --risk-foreground: oklch(0.995 0.008 28);
+  --moderate: oklch(0.552 0.132 68);
+  --moderate-foreground: oklch(0.995 0.01 70);
+  /* `text-moderate` on a `bg-moderate/10` tint is only 4.34:1 in light mode.
+     This deepened variant clears 4.5:1 for 10-11px text; dark mode aliases it
+     back to the luminous token, which already passes. */
+  --moderate-strong: color-mix(in oklab, var(--moderate) 92%, black);
+  --safe: oklch(0.495 0.105 172);
+  --safe-foreground: oklch(0.995 0.006 172);
+
+  --chart-1: oklch(0.5 0.108 178);
+  --chart-2: oklch(0.575 0.19 28);
+  --chart-3: oklch(0.525 0.148 262);
+  --chart-4: oklch(0.578 0.14 302);
+  --chart-5: oklch(0.558 0.038 252);
+  --chart-6: oklch(0.53 0.12 232);
+
+  --radius: 1.25rem;
+
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.205 0.024 262);
+  --sidebar-primary: oklch(0.49 0.102 182);
+  --sidebar-primary-foreground: oklch(0.995 0.004 180);
+  --sidebar-accent: oklch(0.955 0.008 250);
+  --sidebar-accent-foreground: oklch(0.27 0.028 262);
+  --sidebar-border: oklch(0.3 0.028 262 / 12%);
+  --sidebar-ring: oklch(0.49 0.102 182 / 45%);
+
+  /* ---- derived design atoms (used by the utilities further down) ---- */
+  --elev-hairline: inset 0 1px 0 oklch(1 0 0 / 70%);
+  --elev-1:
+    0 1px 2px oklch(0.22 0.03 262 / 6%),
+    0 2px 8px -2px oklch(0.22 0.03 262 / 8%);
+  --elev-2:
+    0 2px 4px oklch(0.22 0.03 262 / 6%),
+    0 18px 40px -16px oklch(0.22 0.03 262 / 22%);
+  --elev-glow:
+    0 0 0 1px oklch(0.49 0.102 182 / 16%),
+    0 14px 38px -14px oklch(0.49 0.102 182 / 34%);
+
+  --glass-bg: oklch(1 0 0 / 66%);
+  --glass-border: oklch(0.3 0.028 262 / 10%);
+  --glass-sheen: oklch(1 0 0 / 78%);
+  --glass-shadow:
+    0 1px 2px oklch(0.22 0.03 262 / 6%),
+    0 14px 34px -14px oklch(0.22 0.03 262 / 20%);
+  --glass-bg-opaque: oklch(0.995 0.003 250 / 94%);
+
+  --grain-opacity: 0.036;
+  --grain-blend: multiply;
+
+  --grid-line: oklch(0.3 0.028 262 / 7%);
+
+  --hero-base-a: oklch(0.996 0.004 200);
+  --hero-base-b: oklch(0.962 0.019 212);
+  --hero-glow-1: oklch(0.86 0.076 182 / 58%);
+  --hero-glow-2: oklch(0.9 0.055 265 / 46%);
+
+  --aurora-1: oklch(0.885 0.09 182 / 62%);
+  --aurora-2: oklch(0.9 0.07 268 / 52%);
+  --aurora-3: oklch(0.925 0.078 96 / 42%);
+
+  --focus-ring: oklch(0.46 0.104 182);
+  --focus-halo: oklch(0.49 0.102 182 / 22%);
+  --hover-border: oklch(0.49 0.102 182 / 32%);
+
+  --scrollbar-thumb: oklch(0.3 0.028 262 / 22%);
+  --scrollbar-thumb-hover: oklch(0.3 0.028 262 / 36%);
+
+  --selection-bg: oklch(0.49 0.102 182 / 20%);
+  --selection-fg: oklch(0.18 0.03 262);
+}
+
+/* --------------------------------------------------------------------------
+   3. DARK palette — deep blue-black ground, luminous teal primary
+   -------------------------------------------------------------------------- */
+
+.dark {
+  color-scheme: dark;
+
+  --background: oklch(0.148 0.016 262);
+  --foreground: oklch(0.972 0.006 258);
+
+  --card: oklch(0.198 0.018 262);
+  --card-foreground: oklch(0.972 0.006 258);
+  --popover: oklch(0.222 0.02 262);
+  --popover-foreground: oklch(0.972 0.006 258);
+
+  --primary: oklch(0.795 0.138 176);
+  --primary-foreground: oklch(0.16 0.028 262);
+
+  --secondary: oklch(0.268 0.02 262);
+  --secondary-foreground: oklch(0.972 0.006 258);
+
+  --muted: oklch(0.238 0.018 262);
+  --muted-foreground: oklch(0.705 0.022 258);
+
+  --accent: oklch(0.3 0.054 176);
+  --accent-foreground: oklch(0.9 0.088 176);
+
+  --destructive: oklch(0.688 0.192 30);
+  --destructive-foreground: oklch(0.16 0.028 262);
+
+  --border: oklch(1 0 0 / 11%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.795 0.138 176 / 55%);
+
+  --risk: oklch(0.695 0.192 30);
+  --risk-foreground: oklch(0.16 0.028 262);
+  --moderate: oklch(0.8 0.152 84);
+  --moderate-foreground: oklch(0.18 0.03 84);
+  --moderate-strong: var(--moderate);
+  --safe: oklch(0.795 0.138 176);
+  --safe-foreground: oklch(0.16 0.028 262);
+
+  --chart-1: oklch(0.795 0.138 176);
+  --chart-2: oklch(0.7 0.185 30);
+  --chart-3: oklch(0.715 0.125 258);
+  --chart-4: oklch(0.735 0.125 302);
+  --chart-5: oklch(0.625 0.03 258);
+  --chart-6: oklch(0.72 0.13 224);
+
+  --sidebar: oklch(0.198 0.018 262);
+  --sidebar-foreground: oklch(0.972 0.006 258);
+  --sidebar-primary: oklch(0.795 0.138 176);
+  --sidebar-primary-foreground: oklch(0.16 0.028 262);
+  --sidebar-accent: oklch(0.268 0.02 262);
+  --sidebar-accent-foreground: oklch(0.972 0.006 258);
+  --sidebar-border: oklch(1 0 0 / 11%);
+  --sidebar-ring: oklch(0.795 0.138 176 / 55%);
+
+  /* ---- derived design atoms ---- */
+  --elev-hairline: inset 0 1px 0 oklch(1 0 0 / 7%);
+  --elev-1:
+    0 1px 2px oklch(0 0 0 / 42%),
+    0 2px 10px -4px oklch(0 0 0 / 46%);
+  --elev-2:
+    0 2px 6px oklch(0 0 0 / 46%),
+    0 22px 48px -20px oklch(0 0 0 / 72%);
+  --elev-glow:
+    0 0 0 1px oklch(0.795 0.138 176 / 24%),
+    0 16px 44px -16px oklch(0.795 0.138 176 / 30%);
+
+  --glass-bg: oklch(0.245 0.021 262 / 58%);
+  --glass-border: oklch(1 0 0 / 12%);
+  --glass-sheen: oklch(1 0 0 / 10%);
+  --glass-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 6%),
+    0 18px 44px -18px oklch(0 0 0 / 66%);
+  --glass-bg-opaque: oklch(0.21 0.019 262 / 94%);
+
+  --grain-opacity: 0.055;
+  --grain-blend: soft-light;
+
+  --grid-line: oklch(1 0 0 / 5%);
+
+  --hero-base-a: oklch(0.152 0.018 262);
+  --hero-base-b: oklch(0.202 0.032 250);
+  --hero-glow-1: oklch(0.72 0.13 178 / 17%);
+  --hero-glow-2: oklch(0.6 0.14 276 / 15%);
+
+  --aurora-1: oklch(0.7 0.15 178 / 26%);
+  --aurora-2: oklch(0.58 0.16 278 / 24%);
+  --aurora-3: oklch(0.66 0.15 330 / 17%);
+
+  --focus-ring: oklch(0.84 0.128 176);
+  --focus-halo: oklch(0.795 0.138 176 / 26%);
+  --hover-border: oklch(0.795 0.138 176 / 36%);
+
+  --scrollbar-thumb: oklch(1 0 0 / 16%);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 28%);
+
+  --selection-bg: oklch(0.795 0.138 176 / 26%);
+  --selection-fg: oklch(0.99 0.005 258);
+}
+
+/* --------------------------------------------------------------------------
+   4. Base layer — resets, typography defaults, chrome
+   -------------------------------------------------------------------------- */
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
+  html {
+    /* keeps the document scrollport authoritative while making it impossible
+       for a stray wide child to introduce a sideways scroll on a 390px phone */
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    scroll-padding-block-start: 5rem;
+    background-color: var(--background);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-background text-foreground;
+    min-height: 100svh;
+    max-width: 100%;
+    font-optical-sizing: auto;
+    overscroll-behavior-y: contain;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Headings get sensible optical defaults; any Tailwind utility still wins
+     because utilities are a later cascade layer than base. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+    letter-spacing: -0.016em;
+    text-wrap: balance;
+  }
+
+  h1 {
+    letter-spacing: -0.028em;
+  }
+
+  h2 {
+    letter-spacing: -0.022em;
+  }
+
+  p,
+  li,
+  dd,
+  figcaption,
+  blockquote {
+    text-wrap: pretty;
+  }
+
+  /* Anything that is obviously a number reads better with fixed-width digits */
+  output,
+  time,
+  data,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* Media never overflows its column on a narrow screen */
+  img,
+  svg,
+  video,
+  canvas,
+  audio,
+  iframe,
+  embed,
+  object {
+    max-width: 100%;
+  }
+
+  img,
+  video,
+  canvas {
+    height: auto;
+  }
+
+  /* Keyboard users always see where they are */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+
+  ::-moz-selection {
+    background-color: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+
+  /* Slim, theme-aware scrollbars ------------------------------------- */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    background-clip: content-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+    background-clip: content-box;
+  }
+
+  /* iOS date/number inputs inherit the app font instead of Helvetica */
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+
+  [hidden] {
+    display: none !important;
   }
 }
 
-@layer utilities {
-  .safe-top {
-    padding-top: env(safe-area-inset-top);
-  }
-  .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
+/* --------------------------------------------------------------------------
+   5. Component layer — surfaces, textures and expressive backdrops.
+      These live in `components` on purpose: any Tailwind utility placed on
+      the same element (bg-*, border-*, shadow-*) still overrides them.
+   -------------------------------------------------------------------------- */
+
+@layer components {
+  /* ---- frosted glass ------------------------------------------------- */
+  .glass {
+    position: relative;
+    background-color: var(--glass-bg);
+    background-image: linear-gradient(
+      to bottom,
+      var(--glass-sheen) 0%,
+      transparent 42%
+    );
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    -webkit-backdrop-filter: blur(18px) saturate(165%);
+    backdrop-filter: blur(18px) saturate(165%);
   }
 
+  @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+    .glass {
+      background-color: var(--glass-bg-opaque);
+    }
+  }
+
+  /* ---- fine film grain ---------------------------------------------- */
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    opacity: var(--grain-opacity);
+    mix-blend-mode: var(--grain-blend);
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)'/%3E%3C/svg%3E");
+  }
+
+  /* When .grain is a plain block it needs a containing block for ::after.
+     Positioned utilities (absolute/fixed/sticky) override this cleanly. */
+  .grain {
+    position: relative;
+  }
+
+  /* ---- gradient text ------------------------------------------------- */
+  .gradient-text {
+    background-image: linear-gradient(
+      104deg,
+      var(--primary) 0%,
+      color-mix(in oklch, var(--primary) 45%, var(--chart-3)) 52%,
+      var(--chart-3) 100%
+    );
+    background-size: 100% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    padding-block-end: 0.04em;
+  }
+
+  @supports not ((background-clip: text) or (-webkit-background-clip: text)) {
+    .gradient-text {
+      color: var(--primary);
+      -webkit-text-fill-color: currentColor;
+      background-image: none;
+    }
+  }
+
+  /* ---- hoverable card ------------------------------------------------ */
+  .card-hover {
+    will-change: auto;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .card-hover {
+      transition:
+        transform 280ms var(--ease-spring),
+        box-shadow 280ms var(--ease-spring),
+        border-color 220ms var(--ease-swift),
+        background-color 220ms var(--ease-swift);
+    }
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .card-hover:hover {
+      transform: translateY(-3px);
+      border-color: var(--hover-border);
+      box-shadow: var(--elev-2);
+    }
+  }
+
+  .card-hover:focus-within {
+    border-color: var(--hover-border);
+    box-shadow: var(--elev-2);
+  }
+
+  /* ---- typography helpers ------------------------------------------- */
+  .display {
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.03;
+    font-optical-sizing: auto;
+    text-wrap: balance;
+  }
+
+  .metric {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'ss01' 1;
+    letter-spacing: -0.02em;
+  }
+
+  /* ---- drifting aurora colour field ---------------------------------
+     The field lives here (components) and the drift lives in the utilities
+     layer, so `bg-*` / `bg-none` utilities can still replace the gradient. */
+  .animate-aurora {
+    background-image:
+      radial-gradient(42% 52% at 18% 28%, var(--aurora-1) 0%, transparent 70%),
+      radial-gradient(38% 46% at 82% 22%, var(--aurora-2) 0%, transparent 70%),
+      radial-gradient(48% 58% at 56% 88%, var(--aurora-3) 0%, transparent 72%);
+    background-repeat: no-repeat;
+    background-size: 180% 180%, 165% 165%, 200% 200%;
+    background-position: 0% 50%, 100% 40%, 50% 100%;
+  }
+
+  /* ---- marquee track clipping --------------------------------------- */
+  .marquee-mask {
+    overflow: clip;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 6%,
+      black 94%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 6%,
+      black 94%,
+      transparent 100%
+    );
+  }
+
+  /* ---- home hero backdrops (theme aware) ---------------------------- */
   .home-hero {
     background:
-      radial-gradient(circle at 72% 42%, oklch(0.78 0.135 174 / 8%), transparent 28rem),
-      linear-gradient(115deg, oklch(0.155 0.014 260), oklch(0.18 0.025 250));
+      radial-gradient(118% 92% at 78% 10%, var(--hero-glow-1), transparent 62%),
+      radial-gradient(92% 82% at 10% 92%, var(--hero-glow-2), transparent 60%),
+      linear-gradient(152deg, var(--hero-base-a), var(--hero-base-b));
   }
 
   .home-hero-grid {
-    background-image: linear-gradient(oklch(1 0 0 / 4%) 1px, transparent 1px),
-      linear-gradient(90deg, oklch(1 0 0 / 4%) 1px, transparent 1px);
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
     background-size: 4rem 4rem;
+    -webkit-mask-image: linear-gradient(to bottom, black, transparent 88%);
     mask-image: linear-gradient(to bottom, black, transparent 88%);
   }
 
@@ -132,6 +699,105 @@
     transform: perspective(1000px) rotateY(-8deg) rotateX(3deg);
   }
 }
+
+/* --------------------------------------------------------------------------
+   6. Utility layer — layout affordances
+   -------------------------------------------------------------------------- */
+
+@layer utilities {
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .safe-x {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* ---- focus ring ----------------------------------------------------
+     Deliberately in `utilities`, not `components`: Tailwind's `outline-none`
+     lives in this layer, and layer order beats specificity. Sitting in the
+     same layer lets `.ring-focus:focus-visible` (0,2,0) win over
+     `.outline-none` (0,1,0) instead of being silently cancelled by it. */
+  .ring-focus {
+    outline-color: var(--focus-ring);
+  }
+
+  .ring-focus:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    /* only the STYLE is forced, so the forced-colours block further down can
+       still repaint the colour with Highlight */
+    outline-style: solid !important;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 5px var(--focus-halo);
+  }
+
+  /* ---- animation utilities ----------------------------------------- */
+  .animate-scan-sweep {
+    animation: scan-sweep 2.6s ease-in-out infinite;
+  }
+
+  .animate-breathe-ring {
+    animation: breathe-ring 2.4s ease-in-out infinite;
+  }
+
+  .animate-float-slow {
+    animation: float-slow 4s ease-in-out infinite;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.42s var(--ease-swift) both;
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.5s var(--ease-spring) both;
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.58s var(--ease-spring) both;
+  }
+
+  .animate-shimmer {
+    animation: shimmer-bar 1.8s ease-in-out infinite;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2.4s var(--ease-swift) infinite;
+  }
+
+  .animate-marquee {
+    /* pair with an overflow-hidden parent and duplicated content */
+    animation: marquee-x var(--marquee-duration, 32s) linear infinite;
+    will-change: transform;
+  }
+
+  .animate-aurora {
+    animation: aurora-drift 26s ease-in-out infinite alternate;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   7. Keyframes
+   -------------------------------------------------------------------------- */
 
 @keyframes scan-sweep {
   0% {
@@ -172,6 +838,15 @@
   }
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes fade-in-up {
   from {
     opacity: 0;
@@ -183,12 +858,56 @@
   }
 }
 
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 @keyframes shimmer-bar {
   0% {
     transform: translateX(-100%);
   }
   100% {
     transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-glow {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--focus-halo) 100%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 12px color-mix(in oklch, var(--focus-halo) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--focus-halo) 0%, transparent);
+  }
+}
+
+@keyframes marquee-x {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes aurora-drift {
+  0% {
+    background-position: 0% 50%, 100% 40%, 50% 100%;
+  }
+  50% {
+    background-position: 42% 28%, 58% 74%, 18% 44%;
+  }
+  100% {
+    background-position: 100% 46%, 8% 22%, 78% 18%;
   }
 }
 
@@ -212,22 +931,141 @@
   }
 }
 
-.animate-scan-sweep {
-  animation: scan-sweep 2.6s ease-in-out infinite;
+/* --------------------------------------------------------------------------
+   8. Reduced motion — unlayered so it beats every rule above.
+      Named animations are switched off outright and their final resting
+      state is pinned so nothing jumps or disappears.
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+
+  .animate-fade-in,
+  .animate-fade-in-up,
+  .animate-slide-up {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .animate-float-slow,
+  .animate-marquee,
+  .animate-aurora,
+  .animate-pulse-glow {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .animate-pulse-glow {
+    box-shadow: 0 0 0 3px var(--focus-halo) !important;
+  }
+
+  .animate-breathe-ring {
+    animation: none !important;
+    transform: none !important;
+    opacity: 0.7 !important;
+  }
+
+  /* the sweep line is decorative: park it, dimmed, instead of removing it */
+  .animate-scan-sweep {
+    animation: none !important;
+    transform: none !important;
+    opacity: 0.3 !important;
+  }
+
+  .animate-shimmer {
+    animation: none !important;
+    transform: none !important;
+    opacity: 0.2 !important;
+  }
+
+  /* the orbit keyframes also supply the centring translate — keep it */
+  .home-hero-orbit {
+    animation: none !important;
+    transform: translate(-50%, -50%) !important;
+  }
+
+  /* keep the static tilt, drop the drift */
+  .home-guide-frame {
+    animation: none !important;
+    transform: perspective(1000px) rotateY(-5deg) rotateX(2deg) !important;
+  }
+
+  .card-hover {
+    transition: none !important;
+  }
+
+  .card-hover:hover,
+  .card-hover:focus-within {
+    transform: none !important;
+  }
 }
 
-.animate-breathe-ring {
-  animation: breathe-ring 2.4s ease-in-out infinite;
+/* --------------------------------------------------------------------------
+   9. Forced colours / high contrast — never leave text unreadable
+   -------------------------------------------------------------------------- */
+
+@media (forced-colors: active) {
+  .gradient-text {
+    background-image: none;
+    color: CanvasText;
+    -webkit-text-fill-color: CanvasText;
+  }
+
+  .glass {
+    background-color: Canvas;
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-color: CanvasText;
+  }
+
+  .grain::after {
+    display: none;
+  }
+
+  .ring-focus:focus-visible,
+  :focus-visible {
+    outline-color: Highlight;
+  }
 }
 
-.animate-float-slow {
-  animation: float-slow 4s ease-in-out infinite;
-}
+/* --------------------------------------------------------------------------
+   10. Print — the screening summary should be shareable on paper
+   -------------------------------------------------------------------------- */
 
-.animate-fade-in-up {
-  animation: fade-in-up 0.5s ease-out both;
-}
+@media print {
+  .animate-scan-sweep,
+  .animate-breathe-ring,
+  .animate-float-slow,
+  .animate-shimmer,
+  .animate-pulse-glow,
+  .animate-marquee,
+  .animate-aurora,
+  .home-hero-orbit,
+  .home-guide-frame {
+    animation: none !important;
+  }
 
-.animate-shimmer {
-  animation: shimmer-bar 1.8s ease-in-out infinite;
+  .grain::after {
+    display: none;
+  }
+
+  .glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
 }

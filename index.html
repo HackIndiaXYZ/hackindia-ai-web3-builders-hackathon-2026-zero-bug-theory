@@ -1,16 +1,130 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon-32.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0c10" />
-    <meta name="description" content="AnemiaScan — a smarter way to screen for anemia risk from a lower-eyelid image." />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
     <title>AnemiaScan</title>
+    <meta
+      name="description"
+      content="AnemiaScan screens for anaemia risk from a photo of your lower eyelid. The image is analysed on your device, never uploaded, and the result is a screening prompt — not a diagnosis."
+    />
+    <meta name="application-name" content="AnemiaScan" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- Browser chrome follows the palette. Both values are the computed sRGB
+         of `--background` in src/index.css and are defined once in
+         src/lib/theme.ts as THEME_COLOR — keep all three in step. The light
+         entry comes first so the runtime theme control can collapse both to an
+         explicit choice. -->
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f9fbfc"
+      data-theme-color="light"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#070b12"
+      data-theme-color="dark"
+    />
+
+    <link rel="icon" type="image/png" href="/favicon-32.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/icon.svg" color="#2fd8b6" />
+
+    <!-- Installed / standalone behaviour -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="AnemiaScan" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AnemiaScan" />
+    <meta property="og:title" content="AnemiaScan — anaemia risk screening from an eyelid photo" />
+    <meta
+      property="og:description"
+      content="Point your camera at the inside of your lower eyelid. AnemiaScan measures pallor, redness, saturation, texture and illumination on-device and returns a risk band with a confidence figure. A screening aid, not a diagnosis."
+    />
+    <meta property="og:image" content="/icons/icon-512.png" />
+    <meta property="og:image:alt" content="The AnemiaScan app mark: an eye with a scanning beam." />
+    <meta property="og:locale" content="en" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AnemiaScan — anaemia risk screening from an eyelid photo" />
+    <meta
+      name="twitter:description"
+      content="On-device anaemia risk screening from a photo of the palpebral conjunctiva. Nothing is uploaded. A screening aid, not a diagnosis."
+    />
+    <meta name="twitter:image" content="/icons/icon-512.png" />
+
+    <!-- Inter is self-hosted from public/fonts, so the app issues no
+         third-party request and its typography survives going offline. -->
+    <link
+      rel="preload"
+      href="/fonts/inter-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+    />
+
+    <!-- No-flash theme boot: paint the stored palette before the first frame.
+         Key and defaults mirror src/lib/theme.ts exactly (dark is the default). -->
+    <script>
+      ;(function () {
+        try {
+          var stored = window.localStorage.getItem('anemiascan.theme')
+          var choice =
+            stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'dark'
+          var resolved = choice
+          if (choice === 'system') {
+            resolved =
+              window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          }
+          var root = document.documentElement
+          root.classList.toggle('dark', resolved === 'dark')
+          root.style.colorScheme = resolved
+          if (choice !== 'system') {
+            var metas = document.querySelectorAll('meta[name="theme-color"]')
+            var color = resolved === 'dark' ? '#070b12' : '#f9fbfc'
+            for (var i = 0; i < metas.length; i++) {
+              metas[i].setAttribute('content', color)
+            }
+          }
+        } catch (error) {
+          /* storage blocked — the dark class already on <html> stands */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <div
+        style="
+          margin: 0 auto;
+          max-width: 34rem;
+          padding: 3rem 1.5rem;
+          font-family: system-ui, sans-serif;
+          color: #e6eaf2;
+          text-align: center;
+        "
+      >
+        <h1 style="font-size: 1.25rem; margin: 0 0 0.75rem">AnemiaScan needs JavaScript</h1>
+        <p style="margin: 0; line-height: 1.6; color: #9aa5b8">
+          The eyelid image is analysed entirely inside your browser, so the app cannot run with
+          scripting disabled. Nothing is ever uploaded to a server. AnemiaScan is a screening aid
+          and not a medical diagnosis.
+        </p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
