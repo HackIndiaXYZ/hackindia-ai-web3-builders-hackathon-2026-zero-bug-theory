@@ -96,6 +96,8 @@ export interface DoctorReport {
   analysis: ScanAnalysis
   submittedAt: string
   status: 'Awaiting Review' | 'Reviewed'
+  patientProfile?: PatientProfile
   doctorAdvice?: string
+  clinicalAssessment?: 'Safe' | 'Unsafe'
   reviewedAt?: string
 }

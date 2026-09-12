@@ -348,20 +348,21 @@ export default function App() {
           id: `R-${current.length + 1}-${analysis.id}`,
           patientLabel,
           analysis: { ...analysis },
+          patientProfile: patientProfile || undefined,
           submittedAt: new Date().toISOString(),
           status: 'Awaiting Review',
         },
         ...current,
       ])
     },
-    [analysis],
+    [analysis, patientProfile],
   )
 
-  const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string) => {
+  const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string, clinicalAssessment: 'Safe' | 'Unsafe') => {
     setReports((current) =>
       current.map((report) =>
         report.id === reportId
-          ? { ...report, doctorAdvice, status: 'Reviewed', reviewedAt: new Date().toISOString() }
+          ? { ...report, doctorAdvice, clinicalAssessment, status: 'Reviewed', reviewedAt: new Date().toISOString() }
           : report,
       ),
     )
