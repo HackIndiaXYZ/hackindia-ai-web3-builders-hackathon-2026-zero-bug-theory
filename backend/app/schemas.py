@@ -170,6 +170,45 @@ class HealthResponse(BaseModel):
     care_pool_address: str
 
 
+# -- public blockchain read model ------------------------------------------
+#
+# These endpoints deliberately expose chain *state*, not backend signing
+# powers. Browser wallets perform sponsor/clinic writes directly; the API is
+# the trusted source for the deployed contract configuration and a convenient
+# source for read-only confirmation.
+
+
+class BlockchainConfigResponse(BaseModel):
+    status: str
+    network: str
+    chain_id: int
+    live_chain_id: int | None
+    explorer_url: str
+    registry_address: str
+    care_pool_address: str
+
+
+class OnChainPoolResponse(BaseModel):
+    pool_id: int
+    sponsor_address: str
+    total_funded_wei: str
+    total_reserved_wei: str
+    total_redeemed_wei: str
+    available_wei: str
+    active: bool
+
+
+class ClinicAuthorizationResponse(BaseModel):
+    clinic_address: str
+    authorized: bool
+
+
+class ChainTransactionStatusResponse(BaseModel):
+    transaction_hash: str
+    status: str
+    block_number: int | None
+
+
 class AuditEventResponse(BaseModel):
     id: str
     event_type: str
@@ -178,3 +217,4 @@ class AuditEventResponse(BaseModel):
     entity_id: str
     detail: dict
     created_at: datetime
+
