@@ -3,3 +3,7 @@ pmOnFail: ignore
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
+
+allowBuilds:
+  '@firebase/util': set this to true or false
+  protobufjs: set this to true or false

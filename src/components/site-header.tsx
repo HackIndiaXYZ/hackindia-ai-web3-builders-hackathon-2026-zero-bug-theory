@@ -1,7 +1,8 @@
 import { AppLogo } from '@/src/components/app-logo'
 import { HowItWorksSheet } from '@/src/components/how-it-works-sheet'
+import { LogOut } from 'lucide-react'
 
-export function SiteHeader({ onHome, onDoctorPortal }: { onHome: () => void; onDoctorPortal: () => void }) {
+export function SiteHeader({ onHome, onDoctorPortal, onSignOut }: { onHome: () => void; onDoctorPortal: () => void; onSignOut: () => void }) {
   return (
     <header className="w-full border-b border-border/60">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 lg:px-10">
@@ -29,6 +30,10 @@ export function SiteHeader({ onHome, onDoctorPortal }: { onHome: () => void; onD
             className="text-sm font-medium text-muted-foreground hover:text-foreground"
           >
             Doctor portal
+          </button>
+          <button type="button" onClick={onSignOut} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground" title="Sign out">
+            <LogOut className="h-4 w-4" />
+            <span className="hidden sm:inline">Sign out</span>
           </button>
         </nav>
       </div>
