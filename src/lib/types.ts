@@ -19,6 +19,7 @@ export type ScreenId =
   | 'inconclusive'
   | 'history'
   | 'learn'
+  | 'blockchain'
   | 'doctor'
 
 /**
@@ -99,3 +100,4 @@ export interface DoctorReport {
   doctorAdvice?: string
   reviewedAt?: string
 }
+
