@@ -29,6 +29,27 @@ export interface BlockchainHealth {
 
 export interface ScreeningProof extends ScreeningResult {}
 
+export interface OnChainPool {
+  poolId: number
+  sponsorAddress: string
+  totalFundedWei: string
+  totalReservedWei: string
+  totalRedeemedWei: string
+  availableWei: string
+  active: boolean
+}
+
+export interface ClinicAuthorization {
+  clinicAddress: string
+  authorized: boolean
+}
+
+export interface BlockchainTransactionStatus {
+  transactionHash: string
+  status: 'pending' | 'confirmed' | 'reverted'
+  blockNumber: number | null
+}
+
 export class RecaptureRequiredError extends Error {
   constructor(
     public quality: unknown,
@@ -98,6 +119,51 @@ export async function getBlockchainHealth(): Promise<BlockchainHealth> {
     registryAddress: body.registry_address,
     carePoolAddress: body.care_pool_address,
   }
+}
+
+/** Public configuration for the non-custodial browser workspace. */
+export async function getBlockchainConfig(): Promise<BlockchainHealth> {
+  const response = await fetch(`${API_BASE_URL}/blockchain/config`)
+  if (!response.ok) throw new Error(`Blockchain configuration is unavailable (${response.status})`)
+  const body = await response.json()
+  return {
+    status: body.status,
+    network: body.network,
+    expectedChainId: body.chain_id,
+    liveChainId: body.live_chain_id,
+    chainIdMatch: body.live_chain_id === body.chain_id,
+    registryAddress: body.registry_address,
+    carePoolAddress: body.care_pool_address,
+  }
+}
+
+export async function getOnChainPool(poolId: string): Promise<OnChainPool> {
+  const response = await fetch(`${API_BASE_URL}/blockchain/pools/${encodeURIComponent(poolId)}`)
+  if (!response.ok) throw new Error(response.status === 404 ? 'Pool not found on MST.' : `Pool lookup failed (${response.status})`)
+  const body = await response.json()
+  return {
+    poolId: body.pool_id,
+    sponsorAddress: body.sponsor_address,
+    totalFundedWei: body.total_funded_wei,
+    totalReservedWei: body.total_reserved_wei,
+    totalRedeemedWei: body.total_redeemed_wei,
+    availableWei: body.available_wei,
+    active: body.active,
+  }
+}
+
+export async function getClinicAuthorization(address: string): Promise<ClinicAuthorization> {
+  const response = await fetch(`${API_BASE_URL}/blockchain/clinics/${encodeURIComponent(address)}`)
+  if (!response.ok) throw new Error(`Clinic verification failed (${response.status})`)
+  const body = await response.json()
+  return { clinicAddress: body.clinic_address, authorized: body.authorized }
+}
+
+export async function getBlockchainTransaction(hash: string): Promise<BlockchainTransactionStatus> {
+  const response = await fetch(`${API_BASE_URL}/blockchain/transactions/${encodeURIComponent(hash)}`)
+  if (!response.ok) throw new Error(`Transaction confirmation failed (${response.status})`)
+  const body = await response.json()
+  return { transactionHash: body.transaction_hash, status: body.status, blockNumber: body.block_number }
 }
 
 export async function getScreeningProof(scanIdHash: string): Promise<ScreeningProof> {
