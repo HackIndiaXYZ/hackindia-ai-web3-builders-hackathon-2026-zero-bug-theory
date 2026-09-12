@@ -25,11 +25,16 @@ router = APIRouter(prefix="/blockchain", tags=["blockchain"])
 def blockchain_config() -> BlockchainConfigResponse:
     settings = get_settings()
     live_chain_id: int | None = None
-    status = "ready"
+    status = "ok"
     try:
         live_chain_id = get_chain_client().check_chain_id()
         if live_chain_id != settings.mst_chain_id:
             status = "chain_id_mismatch"
+        elif not settings.mst_anemia_registry_address or not settings.mst_care_pool_address:
+            # The RPC itself can be healthy before this app's contracts have
+            # been deployed. Keep that distinct from an unhealthy network so
+            # the UI can explain exactly what setup remains.
+            status = "contracts_not_deployed"
     except ChainNotConfigured as err:
         status = f"not_configured: {err}"
     except Exception:  # noqa: BLE001 - expose a stable, non-sensitive state to the UI
@@ -97,4 +102,3 @@ def read_transaction(transaction_hash: str) -> ChainTransactionStatusResponse:
         status="confirmed" if receipt["status"] == 1 else "reverted",
         block_number=int(receipt["blockNumber"]),
     )
-
