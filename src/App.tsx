@@ -79,6 +79,8 @@ const SCREEN_IDS: ScreenId[] = [
   'learn',
   'blockchain',
   'doctor',
+  'patient-auth',
+  'patient-profile',
 ]
 
 /**
@@ -149,6 +151,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured)
+  // The sign-in screen is shared by the scan and Proof & care flows. Keep
+  // the requested destination in memory so a completed sign-in returns the
+  // person to the feature they selected, not to the scan flow.
+  const [authReturnTo, setAuthReturnTo] = useState<ScreenId | null>(null)
 
   useEffect(() => {
     if (!auth) return
@@ -212,13 +218,26 @@ export default function App() {
   /* ---- patient auth auto-redirect ---------------------------------------- */
   useEffect(() => {
     if (screen === 'patient-auth' && user) {
-      if (patientProfile === null) {
+      if (authReturnTo) {
+        const destination = authReturnTo
+        setAuthReturnTo(null)
+        replace(destination)
+      } else if (patientProfile === null) {
         replace('patient-profile')
       } else if (patientProfile !== undefined) {
         replace('scan')
       }
     }
-  }, [screen, user, patientProfile, replace])
+  }, [screen, user, patientProfile, authReturnTo, replace])
+
+  // A direct #/blockchain link follows the same Firebase gate as the header
+  // button. The blockchain workspace itself remains unchanged after sign-in.
+  useEffect(() => {
+    if (screen === 'blockchain' && authReady && !user) {
+      setAuthReturnTo('blockchain')
+      replace('patient-auth')
+    }
+  }, [screen, authReady, user, replace])
 
   /** Pop one entry when we own one, otherwise fall back inside the app. */
   const back = useCallback(
@@ -323,7 +342,14 @@ export default function App() {
 
   const goHistory = useCallback(() => push('history'), [push])
   const goLearn = useCallback(() => push('learn'), [push])
-  const goBlockchain = useCallback(() => push('blockchain'), [push])
+  const goBlockchain = useCallback(() => {
+    if (!user) {
+      setAuthReturnTo('blockchain')
+      push('patient-auth')
+      return
+    }
+    push('blockchain')
+  }, [user, push])
   const goDoctor = useCallback(() => push('doctor'), [push])
 
   const handleCaptured = useCallback(
@@ -609,3 +635,4 @@ function OfflineNotice() {
     </div>
   )
 }
+
