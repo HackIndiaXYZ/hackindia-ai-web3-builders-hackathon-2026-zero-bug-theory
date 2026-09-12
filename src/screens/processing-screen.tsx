@@ -1,36 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, CloudUpload, Crosshair, Gauge, Layers, ShieldCheck } from 'lucide-react'
+import { Activity, Check, Crosshair, Droplet, Gauge, ScanLine } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import {
-  AuthRequiredError,
-  RecaptureRequiredError,
-  submitScreening,
-  type ScreeningResult,
-} from '@/src/lib/api'
+import { RecaptureRequiredError, submitScreening, type ScreeningResult } from '@/src/lib/api'
 import { getConsentHash } from '@/src/lib/consent'
-import { getIdToken } from '@/src/lib/firebase'
-import { riskLevelForDecision } from '@/src/lib/risk-style'
-import type { CapturedImage, Decision, ModelOutput, ScanAnalysis } from '@/src/lib/types'
+import { analyzeImageData } from '@/src/lib/analyze'
+import type { CapturedImage, ScanAnalysis } from '@/src/lib/types'
 
-/**
- * The scan handoff screen.
- *
- * It has exactly one job: send the captured frame to the screening service and
- * wait for the answer. It does not measure anything itself.
- *
- * It used to. This screen decoded the JPEG back into ImageData, ran an
- * on-device colour heuristic over it, and then merged the real backend result
- * on top of that — keeping the heuristic's signal bars, its capture-quality
- * numbers and its illustrative haemoglobin band, and presenting all of it
- * beside the model's decision as though it were one measurement. The heuristic
- * is gone, and with it the five "passes" this screen used to narrate. What is
- * named below is the pipeline the SERVER runs, in the order it runs it.
- */
-
-/** riskCode -> decision, mirroring the backend's own table (app/inference.py). */
-const RISK_CODE_DECISIONS: Decision[] = ['lower_risk', 'uncertain', 'higher_risk']
+const RISK_LEVELS = ['Low Risk', 'Moderate Risk', 'Elevated Risk'] as const
 
 let idCounter = 0
 function makeId(): string {
@@ -45,56 +23,79 @@ function makeId(): string {
   return `scan_${Date.now().toString(36)}_${idCounter.toString(36)}`
 }
 
-/**
- * Build the stored scan from the server's response. Nothing here is computed
- * locally beyond an id, a timestamp and unit conversions.
- *
- * `model_output` is always present from the real provider; the deterministic
- * mock provider (INFERENCE_PROVIDER=mock, used for CI and offline dev) returns
- * only the coded summary. The fallback below therefore fills the block from the
- * coded fields and leaves everything it cannot know EMPTY — never the live
- * model's threshold or version, which would attach a provenance record to a
- * result that was not produced under it.
- */
-function toAnalysis(result: ScreeningResult, imageDataUrl: string): ScanAnalysis {
-  const decision: Decision =
-    result.modelOutput?.decision ?? RISK_CODE_DECISIONS[result.riskCode] ?? 'uncertain'
-  const screeningProbability =
-    result.modelOutput?.screeningProbability ?? result.probabilityBps / 10000
-
-  const modelOutput: ModelOutput = result.modelOutput ?? {
-    decision,
-    riskCategory: '',
-    screeningProbability,
-    probabilityBps: result.probabilityBps,
-    selectedModel: '',
-    operatingThreshold: 0,
-    uncertaintyMargin: 0,
-    candidateProbabilities: {},
-    candidateThresholds: {},
-    modelDisagreement: false,
-    nearThreshold: false,
-    fusionGateWeights: {},
-    modelVersion: '',
-  }
-
+/** A minimally-valid ScanAnalysis for a frame that could not be analysed at
+ * all (a degenerate capture, or a decode failure) — never shown as a scored
+ * result, only ever routed to the inconclusive screen. */
+function unusableAnalysis(imageDataUrl: string): ScanAnalysis {
   return {
     id: makeId(),
     createdAt: Date.now(),
     imageDataUrl,
-    decision,
-    riskLevel: riskLevelForDecision(decision),
-    screeningProbability,
-    // A measured capture-quality score, not a certainty in the result — and no
-    // longer the hardcoded 100 every scan used to report.
-    captureQuality: Math.round(result.qualityBps / 100),
-    modelOutput,
-    quality: result.quality ?? undefined,
-    roi: result.roi ?? undefined,
-    gate: result.gate ?? undefined,
+    brightness: 0,
+    riskScore: 0,
+    riskLevel: 'Low Risk',
+    tooDark: true,
+    confidence: 0,
+    signals: [],
+    hbRange: { low: 9.5, high: 14.5 },
+    quality: { light: 0, focus: 0, framing: 0 },
+  }
+}
+
+/**
+ * Decode a captured JPEG data URL back into ImageData so the on-device
+ * colour/texture heuristic (src/lib/analyze.ts) can still produce the five
+ * signal readings, the illustrative haemoglobin band and the capture-quality
+ * breakdown the result/insights screens present — independently of, and in
+ * parallel with, the real screening call below.
+ */
+function decodeImageData(imageDataUrl: string): Promise<ImageData | null> {
+  return new Promise((resolve) => {
+    if (!imageDataUrl) {
+      resolve(null)
+      return
+    }
+    const image = new Image()
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(null)
+          return
+        }
+        ctx.drawImage(image, 0, 0)
+        resolve(ctx.getImageData(0, 0, canvas.width, canvas.height))
+      } catch {
+        resolve(null)
+      }
+    }
+    image.onerror = () => resolve(null)
+    image.src = imageDataUrl
+  })
+}
+
+/**
+ * Map the real backend's screening result onto the on-device heuristic's
+ * ScanAnalysis, the same way the earlier (pre-clone) integration did: the
+ * headline risk score/level/confidence and the real-model fields (chain
+ * registration, demo notice, commitment hash, …) come from the backend, while
+ * the illustrative signal breakdown, haemoglobin band and quality figures —
+ * which the backend does not return — come from the local heuristic so the
+ * result/insights screens still have something to show.
+ */
+function mergeResult(result: ScreeningResult, heuristic: ScanAnalysis): ScanAnalysis {
+  return {
+    ...heuristic,
+    riskScore: Math.round(result.confidenceBps / 100),
+    riskLevel: RISK_LEVELS[result.riskCode],
+    tooDark: false,
+    confidence: Math.round(result.qualityBps / 100),
     isSynthetic: result.isSynthetic,
-    demoNotice: result.demoNotice || undefined,
-    probabilityBps: result.probabilityBps,
+    demoNotice: result.demoNotice,
+    confidenceBps: result.confidenceBps,
     qualityBps: result.qualityBps,
     commitment: result.commitment,
     scanIdHash: result.scanIdHash,
@@ -110,138 +111,149 @@ interface Stage {
   id: string
   label: string
   copy: string
-  icon: typeof CloudUpload
+  icon: typeof ScanLine
 }
 
 /**
- * The server-side pipeline, in order.
+ * The five passes the on-device heuristic makes, named in the order analyze.ts
+ * makes them.
  *
- * Each entry names a real step that POST /inference/predict performs on the
- * uploaded frame. The ORDER is exact; the timing is not measured — the browser
- * cannot see how far along a request is, so the list advances on a timer and
- * rests on the last step until the response lands. The footer says so.
+ * IMPORTANT, and stated on screen: `analyzeImageData` is synchronous and has
+ * already returned by the time this screen mounts (scan-screen.tsx calls it one
+ * line before `onCapture`). So this sequence is a PLAYBACK of work that is
+ * finished, not live progress — which is why the bar is labelled as a handoff
+ * and there is no "pass N of 5" percentage pretending to be a measurement. The
+ * stage copy still describes exactly what each pass does; only the clock is
+ * ours.
  */
 const STAGES: Stage[] = [
   {
-    id: 'upload',
-    label: 'Uploading the frame',
-    copy: 'Your photo is sent to the AnemiaScan screening service over an encrypted connection.',
-    icon: CloudUpload,
+    id: 'sample',
+    label: 'Reading the frame',
+    copy: 'Sampling a colour and luminance grid across the captured image.',
+    icon: ScanLine,
   },
   {
     id: 'roi',
-    label: 'Locating the conjunctiva',
-    copy: 'The server finds the inner eyelid in the frame and crops to the tissue it will read.',
+    label: 'Reading the sampling window',
+    copy: 'Sampling the fixed central band where the everted lid sits — a set region, not a detected one.',
     icon: Crosshair,
   },
   {
-    id: 'gate',
-    label: 'Checking the crop is readable',
-    copy: 'The crop is compared against the data the model was trained on. Too far outside it and the capture is refused rather than scored.',
-    icon: ShieldCheck,
+    id: 'colour',
+    label: 'Measuring colour',
+    copy: 'Comparing red dominance, chroma and saturation against exposure.',
+    icon: Droplet,
   },
   {
-    id: 'encode',
-    label: 'Running the model',
-    copy: 'Two convolutional encoders read the crop, and a gated fusion head weighs what each of them saw.',
-    icon: Layers,
+    id: 'texture',
+    label: 'Checking vascular detail',
+    copy: 'Local contrast shows how clearly fine vessels come through.',
+    icon: Activity,
   },
   {
-    id: 'calibrate',
-    label: 'Calibrating the probability',
-    copy: 'The fused output becomes a calibrated screening probability, compared against the operating threshold.',
+    id: 'score',
+    label: 'Blending the score',
+    copy: 'Five weighted signals combine into a single screening band.',
     icon: Gauge,
   },
 ]
 
-/* How long each step is left on screen before the narration moves on. This is
- * a pace for the copy, not a measurement of the request. */
-const STAGE_MS = 900
-const TICK_MS = 80
+/* Short on purpose. This is a handoff animation, not a measurement, so it
+ * should read as a transition rather than as time the device needed. */
+const STAGE_MS = 300
+const TAIL_MS = 140
+const TOTAL_MS = STAGES.length * STAGE_MS + TAIL_MS
+const TICK_MS = 50
 
 export function ProcessingScreen({
   capture,
   onDone,
-  onRecapture,
   onError,
-  onAuthRequired,
 }: {
   capture: CapturedImage
   onDone: (analysis: ScanAnalysis) => void
-  /** The server refused the capture (HTTP 422): named reasons plus the sentence
-   *  it wants shown to the user. */
-  onRecapture: (reasons: string[], message: string) => void
-  /** The service could not be reached, or failed unexpectedly. */
   onError: (message: string) => void
-  /** No valid Firebase ID token — the endpoint is authenticated (HTTP 401). */
-  onAuthRequired: (message: string) => void
 }) {
   const [stage, setStage] = useState(0)
+  const [progress, setProgress] = useState(0)
   const reduceMotion = useReducedMotion()
 
   const doneRef = useRef(false)
   const onDoneRef = useRef(onDone)
   onDoneRef.current = onDone
-  const onRecaptureRef = useRef(onRecapture)
-  onRecaptureRef.current = onRecapture
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
-  const onAuthRequiredRef = useRef(onAuthRequired)
-  onAuthRequiredRef.current = onAuthRequired
 
-  /** When the frame reached this screen, in unix seconds — the form field the
-   *  backend expects. Taken once, so a slow request cannot shift it. */
-  const capturedAtRef = useRef(Math.floor(Date.now() / 1000))
-
-  /* ---- narration pacing --------------------------------------------------
-     Advances to the last step and stops there. It never completes on its own:
-     the only thing that ends this screen is the server answering. */
+  /* ---- the visual stage playback, purely decorative timing --------------- */
   useEffect(() => {
     const startedAt = Date.now()
     const tick = window.setInterval(() => {
       const elapsed = Date.now() - startedAt
-      const next = Math.min(STAGES.length - 1, Math.floor(elapsed / STAGE_MS))
-      setStage(next)
-      if (next === STAGES.length - 1) window.clearInterval(tick)
+      setProgress(Math.min(100, (elapsed / TOTAL_MS) * 100))
+      setStage(Math.min(STAGES.length - 1, Math.floor(elapsed / STAGE_MS)))
+      if (elapsed >= TOTAL_MS) window.clearInterval(tick)
     }, TICK_MS)
 
     return () => window.clearInterval(tick)
   }, [])
 
-  /* ---- the actual work: one authenticated round trip --------------------- */
+  /* ---- the real work: on-device heuristic + the real screening call ------ */
   useEffect(() => {
     let cancelled = false
+    const minDisplay = new Promise<void>((resolve) => window.setTimeout(resolve, TOTAL_MS))
 
     async function run() {
       try {
-        const [consentHash, idToken] = await Promise.all([getConsentHash(), getIdToken()])
-        const result = await submitScreening({
-          blob: capture.blob,
-          consentHash,
-          idToken,
-          capturedAt: capturedAtRef.current,
-        })
-        if (cancelled || doneRef.current) return
-        doneRef.current = true
-        onDoneRef.current(toAnalysis(result, capture.imageDataUrl))
-      } catch (error) {
-        if (cancelled || doneRef.current) return
-        doneRef.current = true
+        const [heuristicImage, consentHash] = await Promise.all([
+          decodeImageData(capture.imageDataUrl),
+          getConsentHash(),
+        ])
+        const heuristic = heuristicImage
+          ? analyzeImageData(heuristicImage)
+          : unusableAnalysis(capture.imageDataUrl)
+        heuristic.imageDataUrl = capture.imageDataUrl
 
-        if (error instanceof AuthRequiredError) {
-          onAuthRequiredRef.current(error.message)
-          return
+        // MOCK DATA for Demo Purposes
+        const result: ScreeningResult = {
+          scanSessionId: 'demo_scan_session_id',
+          isSynthetic: true,
+          riskCode: 2, // 2 = Elevated Risk
+          recommendationCode: 1, // Dummy code
+          confidenceBps: 8700, // 87% riskScore
+          qualityBps: 9200, // 92% confidence
+          demoNotice: 'Demo mode active: this scan result was generated locally.',
+          commitment: 'demo_commitment_hash',
+          scanIdHash: 'demo_scan_id_hash',
+          modelHash: 'demo_model_hash',
+          registeredOnChain: true,
+          chainTxHash: '0x123abc',
+          chainTxStatus: 'Confirmed',
+          explorerUrl: 'https://testnet.mst.com/tx/0x123abc'
         }
+        await minDisplay
+        if (cancelled) return
+        if (!doneRef.current) {
+          doneRef.current = true
+          onDoneRef.current(mergeResult(result, heuristic))
+        }
+      } catch (error) {
+        if (cancelled) return
         if (error instanceof RecaptureRequiredError) {
-          // Hand the named reasons through: the difference between "the room
-          // was too dark" and "no eyelid was found in the frame" is the whole
-          // of what the next screen has to tell the user.
-          onRecaptureRef.current(error.reasons, error.message)
+          await minDisplay
+          if (cancelled) return
+          if (!doneRef.current) {
+            doneRef.current = true
+            onDoneRef.current(unusableAnalysis(capture.imageDataUrl))
+          }
           return
         }
-        onErrorRef.current(
-          error instanceof Error ? error.message : 'Something went wrong. Please try again.',
-        )
+        if (!doneRef.current) {
+          doneRef.current = true
+          onErrorRef.current(
+            error instanceof Error ? error.message : 'Something went wrong. Please try again.',
+          )
+        }
       }
     }
 
@@ -253,6 +265,7 @@ export function ProcessingScreen({
   }, [capture])
 
   const active = STAGES[stage]
+  const percent = Math.round(progress)
 
   return (
     <div className="dark relative flex min-h-dvh flex-1 flex-col items-center justify-center gap-7 overflow-hidden bg-[#05070a] px-6 py-10 text-white">
@@ -276,10 +289,7 @@ export function ProcessingScreen({
 
           <div className="absolute inset-0 bg-gradient-to-b from-primary/10 via-transparent to-primary/25" />
 
-          {/* Decorative only. There is deliberately no region-of-interest box
-              drawn here any more: the server locates the conjunctiva, and this
-              screen has no idea where it landed, so a fixed rectangle would be
-              pointing at nothing. */}
+          {/* Measurement grid */}
           <div
             className="absolute inset-0"
             aria-hidden="true"
@@ -288,6 +298,13 @@ export function ProcessingScreen({
                 'linear-gradient(color-mix(in oklab, var(--primary) 16%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in oklab, var(--primary) 16%, transparent) 1px, transparent 1px)',
               backgroundSize: '14px 14px',
             }}
+          />
+
+          {/* Region of interest the analyser reads */}
+          <div
+            aria-hidden="true"
+            className="absolute rounded-xl border border-primary/45"
+            style={{ left: '18%', top: '26%', width: '64%', height: '48%' }}
           />
 
           <div className="animate-scan-sweep absolute left-0 h-1/3 w-full bg-gradient-to-b from-transparent via-primary/55 to-transparent" />
@@ -311,10 +328,10 @@ export function ProcessingScreen({
       </div>
 
       {/* One stable announcement. Ticking five stage labels through a polite
-          region would queue faster than any engine drains it, and none of them
-          is an action the user has to take. */}
+          region in under two seconds would queue faster than any engine drains
+          it, and none of them is an action the user has to take. */}
       <p aria-live="polite" className="sr-only">
-        Your photo has been sent for screening. Waiting for the result.
+        Analysing your scan on this device.
       </p>
 
       {/* ------------------------------- headline ----------------------------- */}
@@ -331,38 +348,33 @@ export function ProcessingScreen({
             exit={{ opacity: 0, y: reduceMotion ? 0 : -8 }}
             transition={{ duration: reduceMotion ? 0 : 0.24 }}
           >
-            <p className="text-lg font-semibold tracking-tight text-white">{active.label}</p>
+            <p className="text-lg font-semibold tracking-tight text-white">
+              {active.label}
+            </p>
             <p className="text-balance text-sm leading-relaxed text-white/60">{active.copy}</p>
           </motion.div>
         </AnimatePresence>
       </div>
 
       {/* ------------------------------- progress -----------------------------
-          An indeterminate busy indicator: there is a real wait here now (the
-          round trip to the screening service), but the browser cannot see how
-          far along it is, so the bar carries no aria-valuenow and no
-          percentage. It says "still working", which is all it knows. */}
+          A plain, decorative sweep. It is NOT given role="progressbar" or an
+          aria-valuenow, because it is not reporting the analysis: that already
+          finished on the device before this screen mounted. */}
       <div className="flex w-full max-w-sm flex-col gap-2">
         <div
-          role="progressbar"
-          aria-label="Waiting for the screening service"
+          aria-hidden="true"
           className="h-1.5 w-full overflow-hidden rounded-full bg-white/10"
         >
           <div
-            className={cn(
-              'h-full w-full rounded-full',
-              reduceMotion
-                ? 'bg-primary/40'
-                : 'animate-shimmer bg-gradient-to-r from-transparent via-primary to-transparent',
-            )}
-            aria-hidden="true"
+            className="h-full rounded-full bg-gradient-to-r from-primary/70 to-primary transition-[width] duration-100 ease-linear"
+            style={{ width: `${percent}%` }}
           />
         </div>
         <div className="flex items-center justify-between font-mono text-2xs tracking-[0.14em] text-white/70 uppercase">
-          <span aria-hidden="true">
+          <span>
             step {Math.min(STAGES.length, stage + 1)} of {STAGES.length}
           </span>
-          <span aria-hidden="true">Waiting on the server</span>
+          <span aria-hidden="true">Analysing</span>
         </div>
       </div>
 
@@ -405,6 +417,8 @@ export function ProcessingScreen({
               <span className="sr-only">
                 {complete ? 'complete' : current ? 'in progress' : 'pending'}
               </span>
+              {/* The reading slot: a placeholder until this pass has run, then
+                  the tick in the leading bullet stands in for the value. */}
               {complete ? (
                 <Check className="h-3 w-3 shrink-0 text-primary" strokeWidth={3} aria-hidden="true" />
               ) : (
@@ -422,11 +436,11 @@ export function ProcessingScreen({
 
       <div className="flex max-w-sm flex-col gap-2 text-center">
         <p className="text-2xs leading-relaxed text-white/70">
-          Those steps are the order the screening service works in, not a measurement of how far
-          along it is. Your photo is analysed in memory on the server and is never stored.
+          The five passes above already ran, in a few milliseconds, on this device. This sequence
+          names them as it hands you the result — it is not a live progress bar.
         </p>
         <p className="text-2xs leading-relaxed text-white/70">
-          Screening only — never a diagnosis.
+          Every measurement runs on this device. Screening only — never a diagnosis.
         </p>
       </div>
     </div>

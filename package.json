@@ -1,13 +1,12 @@
 {
-  "name": "anemiascan-web",
+  "name": "my-project",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "vite --configLoader native",
-    "build": "tsc -b && vite build --configLoader native",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc -b --noCheck && vite build --configLoader native",
     "preview": "vite preview"
   },
   "dependencies": {

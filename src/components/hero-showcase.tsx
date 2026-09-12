@@ -2,8 +2,8 @@
  * HeroShowcase — the product story, told as a draggable card stack.
  * --------------------------------------------------------------------------
  * Wraps the skiper40 3D carousel with six chapters that mirror the real flow of
- * the app: capture, the upload and the checks it has to clear, the model,
- * insights, trends, and handing the result to a clinician.
+ * the app: capture, signal extraction, the risk model, insights, trends, and
+ * handing the result to a clinician.
  *
  * The active card also drives a live detail line beneath the stack (via
  * skiper40's `onIndexChange`), so the section explains itself for anyone who
@@ -37,37 +37,37 @@ const CHAPTERS: StoryChapter[] = [
     facets: ['Live readiness checks', 'Front or rear camera', 'Sent securely, never stored'],
   },
   {
-    id: 'checks',
-    caption: 'Step 02 · Upload and checks',
-    title: 'The frame has to earn a score',
+    id: 'signals',
+    caption: 'Step 02 · Signal extraction',
+    title: 'Five readings from one patch of tissue',
     subtitle:
-      'The photo goes up over HTTPS, the conjunctiva is located inside it, and anything the model cannot read is refused with a named reason.',
+      'Pallor, redness, saturation, vascular texture and illumination are each measured separately and shown to you individually.',
     accent: 'var(--chart-3)',
     detail:
-      'Nothing is scored until the server has found the conjunctiva, measured brightness, focus and clipping, and checked how far the crop sits from the data the model was trained on. A frame that fails comes back as a recapture request naming what went wrong — too dark, out of focus, no region found — rather than a number nobody should trust.',
-    facets: ['Conjunctiva located', 'Quality measured, not assumed', 'Refused with a reason'],
+      'The captured frame is drawn to a canvas and sampled pixel by pixel. Each signal is normalised to 0–100 so a washed-out photo and a well-lit one can be compared, and each keeps its own reading rather than disappearing into a single opaque number.',
+    facets: ['Per-channel colour', 'Local texture variance', 'Normalised 0–100'],
   },
   {
     id: 'model',
     caption: 'Step 03 · Risk model',
-    title: 'One trained model, one calibrated number',
+    title: 'A weighted blend, with its weights on show',
     subtitle:
-      'A two-CNN ensemble scores the crop and returns a calibrated probability, judged against a fixed operating threshold.',
+      'The five readings combine into one screening score and one of three bands — Low, Moderate or Elevated.',
     accent: 'var(--chart-4)',
     detail:
-      'The threshold is fixed in advance and shown to you, so the same photo always lands on the same side of it. When the probability sits inside the margin around that threshold — or the two candidate models disagree with each other — the result is reported as uncertain rather than rounded to whichever answer is nearer.',
-    facets: ['Calibrated probability', 'A fixed, published threshold', 'Uncertain is a real answer'],
+      'Every signal carries a visible weight, so you can see which reading moved the score. Capture quality feeds a separate confidence figure: a marginal photo lowers confidence instead of quietly pretending to certainty. A frame that is simply too dark is refused outright.',
+    facets: ['Transparent weights', 'Confidence, not certainty', 'Refuses bad frames'],
   },
   {
     id: 'insights',
     caption: 'Step 04 · Insights',
     title: 'Plain language, and what to do next',
     subtitle:
-      'Each result comes with what the number means, what could have skewed it, and concrete, safe next steps.',
+      'Each result comes with what the signals mean, what could have skewed them, and concrete, safe next steps.',
     accent: 'var(--moderate)',
     detail:
-      'The insights view reads the result back in sentences: how readable your capture actually was, what a benign explanation would look like, and what a genuine one would. Advice stays inside safe ground — get a haemoglobin test, do not self-prescribe iron, and treat urgent symptoms as urgent.',
-    facets: ['Plain-language result', 'Confounders named', 'Safe next steps'],
+      'The insights view reads the breakdown back in sentences: which signal stood out, what a benign explanation would look like, and what a genuine one would. Advice stays inside safe ground — get a haemoglobin test, do not self-prescribe iron, and treat urgent symptoms as urgent.',
+    facets: ['Signal-by-signal notes', 'Confounders named', 'Safe next steps'],
   },
   {
     id: 'trends',
@@ -77,18 +77,18 @@ const CHAPTERS: StoryChapter[] = [
       'Scans are kept locally so you can watch a direction of travel instead of over-reading a single snapshot.',
     accent: 'var(--chart-6)',
     detail:
-      'History lives in this browser only, capped and trimmed so it can never overflow storage, and it stays readable with no connection. The trend chart plots your screening probabilities over time, which is the honest way to read a colour measurement: change over several captures is far more meaningful than any one reading.',
-    facets: ['Stored in this browser', 'Probability over time', 'Clear it in one tap'],
+      'History lives in this browser only, capped and trimmed so it can never overflow storage. The trend chart plots your screening scores over time, which is the honest way to read a colour measurement: change over several captures is far more meaningful than any one reading.',
+    facets: ['Stored on-device', 'Score over time', 'Clear it in one tap'],
   },
   {
     id: 'share',
     caption: 'Step 06 · Share',
     title: 'Something useful to hand a clinician',
     subtitle:
-      'A result you can show at an appointment: the outcome, the probability, the capture quality and the date.',
+      'A result you can show at an appointment: the band, the confidence, the breakdown and the date.',
     accent: 'var(--safe)',
     detail:
-      'The point of a screen is the conversation it starts. A result summarises what the model returned and how readable your capture was, in a form you can show to a nurse or doctor — alongside the reminder, printed on every screen, that only a blood test can confirm anaemia.',
+      'The point of a screen is the conversation it starts. A result summarises what was measured and how confident the reading was, in a form you can show to a nurse or doctor — alongside the reminder, printed on every screen, that only a blood test can confirm anaemia.',
     facets: ['Readable summary', 'Dated and scored', 'Blood test still decides'],
   },
 ]

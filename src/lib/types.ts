@@ -2,26 +2,11 @@
  * Shared domain types for AnemiaScan.
  *
  * IMPORTANT CONTEXT FOR ANYONE READING THIS FILE:
- *
- * Every medical number in this app comes from the SERVER. The browser captures
- * a photo, uploads it, and renders what comes back. It does not compute a risk
- * score, a risk band, a confidence figure, or a haemoglobin estimate, and it
- * must never start doing so again.
- *
- * That is a deliberate reversal. This app used to run a local colour/texture
- * heuristic (`src/lib/analyze.ts`) that produced its own `riskScore`,
- * `riskLevel`, five "signals" and an "illustrative haemoglobin interval". The
- * backend result was then merged on top of it, overwriting only the score, band
- * and confidence — so the signal bars, the capture-quality bars and the
- * haemoglobin range shown next to a real model result were all still derived
- * from the heuristic's own discarded score. The screen presented server output
- * and local guesswork side by side as though they were one measurement.
- *
- * The heuristic is gone. The haemoglobin interval is gone with it: this tool
- * does not and cannot measure haemoglobin, so it no longer prints a g/dL range.
- *
- * AnemiaScan is a screening aid, not a diagnostic device. Nothing here is
- * clinically validated.
+ * AnemiaScan is a *screening aid*, not a diagnostic device. Every number that
+ * flows through these types comes from an on-device colour/texture heuristic
+ * applied to a photo of the palpebral conjunctiva (the inside of the lower
+ * eyelid). Nothing here is a clinically validated measurement, and nothing here
+ * should ever be presented to a user as a diagnosis or as a laboratory result.
  */
 
 /** Every routable surface in the app shell. */
@@ -41,117 +26,58 @@ export type ScreenId =
   | 'patient-profile'
 
 /**
- * The model's four possible outcomes, exactly as the inference contract
- * defines them. `uncertain` is a first-class result — it means the calibrated
- * probability sits within the uncertainty margin of the operating threshold,
- * or the two candidate models disagreed — and it must never be collapsed into
- * a middle risk band on screen.
+ * The three screening bands the heuristic reports. These are risk *bands*,
+ * deliberately phrased as risk rather than as a condition.
  */
-export type Decision = 'lower_risk' | 'higher_risk' | 'uncertain'
+export type RiskLevel = 'Low Risk' | 'Moderate Risk' | 'Elevated Risk'
 
-/** Human-facing label for each decision. */
-export type RiskLevel = 'Lower risk' | 'Higher risk' | 'Uncertain'
+/** The five independent pixel measurements the analyser reports. */
+export type SignalKey = 'pallor' | 'redness' | 'saturation' | 'texture' | 'illumination'
 
-/** Machine-readable reasons a capture was refused. Stable; safe to branch on. */
-export type RecaptureReason =
-  | 'roi_too_small'
-  | 'roi_coverage_low'
-  | 'no_roi_detected'
-  | 'extremely_dark'
-  | 'extremely_bright'
-  | 'severely_clipped'
-  | 'out_of_focus'
-  | 'degenerate_input'
-  | 'implausible_chroma'
-  | 'excess_high_frequency'
-  | 'out_of_distribution'
-  | 'encoder_out_of_range'
-  | 'probability_saturated'
-
-/** Measured capture quality, from the server. */
-export interface QualityReport {
-  accepted: boolean
-  brightness: number
-  blurVariance: number | null
-  clippedFraction: number | null
-  failures: string[]
+/** One measured visual signal, with its contribution to the blended score. */
+export interface SignalBreakdown {
+  key: SignalKey
+  /** Short human-facing name, e.g. "Conjunctival pallor". */
+  label: string
+  /** 0..100 normalised reading for this signal. */
+  value: number
+  /** 0..1 contribution of this signal to the final blended risk score. */
+  weight: number
+  /** One short, plain-language sentence explaining what this reading means. */
+  hint: string
 }
 
-/** Where the server located the conjunctiva in the submitted frame. */
-export interface RoiReport {
-  located: boolean
-  /** Fraction of the submitted frame identified as conjunctiva tissue, 0..1. */
-  coverage: number
-  /** Fraction of the returned ROI that was masked to black, 0..1. */
-  maskedFraction: number
-  meanRednessOverYellow: number
-  method: string
-  bbox: number[] | null
-  sourceSize: number[]
-  roiSize: number[]
-  failures: string[]
-}
-
-/** How far the located ROI sat from the model's training distribution. */
-export interface GateReport {
-  accepted: boolean
-  failures: string[]
-  /** Sum of squared feature z-scores. Expectation is 32 for in-distribution input. */
-  distributionBudget: number
-  distributionBudgetLimit: number
-  rmsZ: number
-  maxAbsZ: number
-  worstFeatures: { feature: string; z: number }[]
-  chromaZ: Record<string, number>
-  texture: Record<string, number>
-  logitZ: Record<string, number>
-}
-
-/** Exactly what the model produced. Every field is server-computed. */
-export interface ModelOutput {
-  decision: Decision
-  riskCategory: string
-  /** The calibrated screening probability, 0..1. NOT a confidence. */
-  screeningProbability: number
-  probabilityBps: number
-  selectedModel: string
-  /** The operating threshold the decision was made against (~0.2076). */
-  operatingThreshold: number
-  uncertaintyMargin: number
-  candidateProbabilities: Record<string, number>
-  candidateThresholds: Record<string, number>
-  modelDisagreement: boolean
-  nearThreshold: boolean
-  /** Softmax weights the gated fusion head gave each branch. */
-  fusionGateWeights: Record<string, number>
-  modelVersion: string
-}
-
-/** One completed screening, as stored and displayed. */
+/** The complete result of analysing a single captured frame. */
 export interface ScanAnalysis {
   id: string
   /** Epoch milliseconds the scan was produced. */
   createdAt: number
   /** Captured frame as a data URL. May be blanked on archived history entries. */
   imageDataUrl: string
-
-  /** The model's decision and its human label. */
-  decision: Decision
+  /** Mean channel brightness of the frame, 0..255. */
+  brightness: number
+  /** Blended screening score, 0..100. Higher means more anaemia-like signals. */
+  riskScore: number
   riskLevel: RiskLevel
-  /** Calibrated screening probability, 0..1 — the headline number. */
-  screeningProbability: number
-  /** Measured capture quality, 0..100. Not a certainty in the result. */
-  captureQuality: number
+  /** True when the frame is too dark to be analysed meaningfully. */
+  tooDark: boolean
+  /** 0..100 confidence in this reading, driven by capture quality. */
+  confidence: number
+  signals: SignalBreakdown[]
+  /** Illustrative estimated haemoglobin interval in g/dL. Not a lab value. */
+  hbRange: { low: number; high: number }
+  /** Capture quality sub-scores, each 0..100. */
+  quality: { light: number; focus: number; framing: number }
 
-  modelOutput: ModelOutput
-  quality?: QualityReport
-  roi?: RoiReport
-  gate?: GateReport
-
-  /* -- provenance ---------------------------------------------------------- */
-  isSynthetic: boolean
+  /* ------------------------------------------------------------------------
+   * Real-model fields — present once a real backend screening result (from
+   * the FastAPI service, see src/lib/api.ts) has been mapped in on top of the
+   * on-device heuristic above. Optional because a purely local/demo analysis
+   * (or a rejected/inconclusive capture) never populates them.
+   * ---------------------------------------------------------------------- */
+  isSynthetic?: boolean
   demoNotice?: string
-  probabilityBps?: number
+  confidenceBps?: number
   qualityBps?: number
   commitment?: string
   scanIdHash?: string
@@ -162,7 +88,7 @@ export interface ScanAnalysis {
   explorerUrl?: string | null
 }
 
-/** A just-captured frame, before it has been sent for analysis. */
+/** A just-captured frame, before it has been analysed. */
 export interface CapturedImage {
   blob: Blob
   imageDataUrl: string

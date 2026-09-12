@@ -1,16 +1,9 @@
 """Screening intake + tamper verification.
 
-The patient flow stays walletless -- screenings are anchored by the backend's
-own ATTESTER_ROLE key, not by an end-user wallet -- but the endpoint is no
-longer open. It requires a verified Firebase ID token (app/firebase_auth.py),
-because previously Firebase gated only the UI and anyone could POST an image
-straight to this service. The verified uid authorises the call and is
-deliberately NOT persisted with the screening, preserving the privacy boundary
-in docs/DEPLOYMENT.md.
-
-The canonical path for this operation is POST /inference/predict (see
-routers/inference.py); POST /registry/screenings is kept as an alias so
-existing clients keep working.
+No auth here: the patient flow is deliberately walletless (see
+docs/DEPLOYMENT.md), so screenings are registered by the backend's own
+ATTESTER_ROLE key, not by an end-user wallet. Sponsor/clinic actions
+(app/routers/carepool.py) are the ones gated behind wallet auth.
 """
 
 import logging
@@ -27,17 +20,14 @@ from ..chain import ChainNotConfigured, get_chain_client
 from ..commitment import build_screening_commitment
 from ..config import get_settings
 from ..db import get_db
-from ..firebase_auth import require_user
 from ..inference import REAL_MODEL_WARNING, get_inference_provider
 from ..models import AuditEvent, ChainTransaction, ScanSession
 from ..schemas import (
     DEMO_MODE_NOTICE,
-    HASH32,
     ScreeningResponse,
     ScreeningVerifyRequest,
     ScreeningVerifyResponse,
 )
-from ..uploads import read_image_upload
 
 logger = logging.getLogger("anemiascan.registry")
 router = APIRouter(prefix="/registry", tags=["registry"])
@@ -51,17 +41,13 @@ def _random_hash32() -> str:
     return "0x" + keccak(os.urandom(32)).hex()
 
 
-async def run_screening(
-    *,
-    image: UploadFile,
-    consent_hash: str,
-    captured_at: int | None,
-    db: Session,
+@router.post("/screenings", response_model=ScreeningResponse, status_code=201)
+async def create_screening(
+    image: UploadFile = File(..., description="Captured palpebral/conjunctiva ROI photo"),
+    consent_hash: str = Form(..., description="0x-prefixed hash of the off-chain consent record"),
+    captured_at: int | None = Form(None, description="unix seconds; defaults to server time if omitted"),
+    db: Session = Depends(get_db),
 ) -> ScreeningResponse:
-    """Score one capture, commit it, and (when configured) anchor it on-chain.
-
-    Shared by POST /inference/predict and the POST /registry/screenings alias.
-    """
     settings = get_settings()
     if settings.inference_provider == "mock" and not settings.mst_mock_model_hash:
         raise HTTPException(
@@ -70,15 +56,13 @@ async def run_screening(
             "and copy the printed hash into backend/.env.",
         )
 
-    image_bytes, _ = await read_image_upload(
-        image,
-        max_bytes=settings.max_upload_bytes,
-        allowed_types=settings.allowed_image_type_list,
-    )
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(400, "empty image upload")
 
     try:
         provider = get_inference_provider(settings)
-    except (ValueError, FileNotFoundError) as err:
+    except ValueError as err:
         raise HTTPException(503, str(err)) from err
 
     try:
@@ -87,19 +71,9 @@ async def run_screening(
         raise HTTPException(503, str(err)) from err
 
     if outcome.recapture_required:
-        # Hand back WHY, not just "inconclusive". The app shows `message` and
-        # can branch on the stable `reasons` codes.
         raise HTTPException(
             422,
-            detail={
-                "decision": "recapture_required",
-                "reasons": outcome.recapture_reasons
-                or list(outcome.quality.get("failures", [])),
-                "message": outcome.message or outcome.warning,
-                "quality": outcome.quality,
-                "roi": outcome.roi,
-                "gate": outcome.gate,
-            },
+            detail={"decision": "recapture_required", "quality": outcome.quality, "message": outcome.warning},
         )
 
     result = outcome.result
@@ -107,22 +81,18 @@ async def run_screening(
     scan_id_hash = _random_hash32()
     salt = _random_hash32()
 
-    try:
-        commitment = build_screening_commitment(
-            scan_id_hash=scan_id_hash,
-            image_digest=outcome.image_digest,
-            model_hash=result.model_hash,
-            risk_code=result.risk_code,
-            recommendation_code=result.recommendation_code,
-            probability_bps=result.probability_bps,
-            quality_bps=result.quality_bps,
-            consent_hash=consent_hash,
-            captured_at=captured_at,
-            salt=salt,
-        )
-    except ValueError as err:
-        # Any malformed hex field is the caller's problem, not a 500.
-        raise HTTPException(422, f"invalid commitment field: {err}") from err
+    commitment = build_screening_commitment(
+        scan_id_hash=scan_id_hash,
+        image_digest=outcome.image_digest,
+        model_hash=result.model_hash,
+        risk_code=result.risk_code,
+        recommendation_code=result.recommendation_code,
+        confidence_bps=result.confidence_bps,
+        quality_bps=result.quality_bps,
+        consent_hash=consent_hash,
+        captured_at=captured_at,
+        salt=salt,
+    )
 
     scan_session = ScanSession(
         scan_id_hash=scan_id_hash,
@@ -130,7 +100,7 @@ async def run_screening(
         model_hash=result.model_hash,
         risk_code=result.risk_code,
         recommendation_code=result.recommendation_code,
-        probability_bps=result.probability_bps,
+        confidence_bps=result.confidence_bps,
         quality_bps=result.quality_bps,
         consent_hash=consent_hash,
         captured_at=captured_at,
@@ -147,32 +117,6 @@ async def run_screening(
 
     try:
         chain = get_chain_client()
-
-        # AnemiaRegistry.registerScreening reverts with ModelNotFound unless the
-        # model hash was registered via registerModel and is still active. No
-        # script registered the REAL model hash, so the first genuine screening
-        # would have broadcast a transaction that reverted and burned the gas.
-        # Check first, and fail with something the operator can act on.
-        if settings.require_registered_model:
-            try:
-                model = chain.get_model(result.model_hash)
-            except Exception as err:  # noqa: BLE001 - an RPC failure means "unknown"
-                logger.warning("could not read model registration: %s", err)
-                model = None
-            if model is not None:
-                if not model.get("registeredAt", 0):
-                    raise HTTPException(
-                        503,
-                        f"Model {result.model_hash} is not registered on AnemiaRegistry, so this "
-                        "screening cannot be anchored. Run `npm run register-model:local` "
-                        "(or register-model:testnet) in contracts/.",
-                    )
-                if not model.get("active", True):
-                    raise HTTPException(
-                        503,
-                        f"Model {result.model_hash} is registered but inactive on AnemiaRegistry.",
-                    )
-
         tx = ChainTransaction(
             purpose="register_screening",
             network=settings.mst_network,
@@ -185,9 +129,7 @@ async def run_screening(
         db.flush()
         scan_session.chain_tx_id = tx.id
 
-        tx_hash = chain.register_screening(
-            scan_id_hash, commitment, result.model_hash, captured_at
-        )
+        tx_hash = chain.register_screening(scan_id_hash, commitment, result.model_hash, captured_at)
         tx.tx_hash = tx_hash
         tx.status = "BROADCAST"
         db.commit()
@@ -201,7 +143,7 @@ async def run_screening(
             else:
                 tx.status = "FAILED"
                 tx.error_message = "transaction reverted on-chain"
-        except Exception as err:  # noqa: BLE001 - reconciliation picks this up later
+        except Exception as err:  # noqa: BLE001 — timeout or RPC hiccup; reconciliation will pick it up later
             logger.warning("registerScreening receipt not yet available: %s", err)
 
         tx_status = tx.status
@@ -212,11 +154,7 @@ async def run_screening(
                 actor=chain.address_for("attester"),
                 entity_type="scan_session",
                 entity_id=scan_session.id,
-                detail={
-                    "scan_id_hash": scan_id_hash,
-                    "commitment": commitment,
-                    "tx_hash": tx_hash,
-                },
+                detail={"scan_id_hash": scan_id_hash, "commitment": commitment, "tx_hash": tx_hash},
             )
         )
         db.commit()
@@ -231,38 +169,14 @@ async def run_screening(
         model_hash=result.model_hash,
         risk_code=result.risk_code,
         recommendation_code=result.recommendation_code,
-        probability_bps=result.probability_bps,
+        confidence_bps=result.confidence_bps,
         quality_bps=result.quality_bps,
         is_synthetic=result.is_synthetic,
         demo_notice=outcome.warning,
-        model_output=result.detail or None,
-        quality=outcome.quality,
-        roi=outcome.roi,
-        gate=outcome.gate,
         registered_on_chain=scan_session.registered_on_chain,
         chain_tx_hash=tx_hash,
         chain_tx_status=tx_status,
         explorer_url=_explorer_url(settings, tx_hash) if tx_hash else None,
-    )
-
-
-@router.post("/screenings", response_model=ScreeningResponse, status_code=201)
-async def create_screening(
-    image: UploadFile = File(..., description="Captured eye / conjunctiva photo"),
-    consent_hash: str = Form(
-        ...,
-        pattern=HASH32,
-        description="0x-prefixed 32-byte hash of the off-chain consent record",
-    ),
-    captured_at: int | None = Form(
-        None, description="unix seconds; defaults to server time if omitted"
-    ),
-    db: Session = Depends(get_db),
-    user: dict = Depends(require_user),
-) -> ScreeningResponse:
-    """Deprecated alias for POST /inference/predict."""
-    return await run_screening(
-        image=image, consent_hash=consent_hash, captured_at=captured_at, db=db
     )
 
 
@@ -281,7 +195,7 @@ def get_screening(scan_id_hash: str, db: Session = Depends(get_db)) -> Screening
         model_hash=scan_session.model_hash,
         risk_code=scan_session.risk_code,
         recommendation_code=scan_session.recommendation_code,
-        probability_bps=scan_session.probability_bps,
+        confidence_bps=scan_session.confidence_bps,
         quality_bps=scan_session.quality_bps,
         is_synthetic=scan_session.is_synthetic,
         demo_notice=DEMO_MODE_NOTICE if scan_session.is_synthetic else REAL_MODEL_WARNING,
@@ -299,24 +213,19 @@ def verify_screening(body: ScreeningVerifyRequest) -> ScreeningVerifyResponse:
     show that it no longer matches either the originally claimed commitment
     or AnemiaRegistry's on-chain record.
     """
-    try:
-        recomputed = build_screening_commitment(
-            scan_id_hash=body.scan_id_hash,
-            image_digest=body.image_digest,
-            model_hash=body.model_hash,
-            risk_code=body.risk_code,
-            recommendation_code=body.recommendation_code,
-            probability_bps=body.probability_bps,
-            quality_bps=body.quality_bps,
-            consent_hash=body.consent_hash,
-            captured_at=body.captured_at,
-            salt=body.salt,
-        )
-        matches_claimed = Web3.to_bytes(hexstr=recomputed) == Web3.to_bytes(
-            hexstr=body.claimed_commitment
-        )
-    except ValueError as err:
-        raise HTTPException(422, f"invalid field: {err}") from err
+    recomputed = build_screening_commitment(
+        scan_id_hash=body.scan_id_hash,
+        image_digest=body.image_digest,
+        model_hash=body.model_hash,
+        risk_code=body.risk_code,
+        recommendation_code=body.recommendation_code,
+        confidence_bps=body.confidence_bps,
+        quality_bps=body.quality_bps,
+        consent_hash=body.consent_hash,
+        captured_at=body.captured_at,
+        salt=body.salt,
+    )
+    matches_claimed = Web3.to_bytes(hexstr=recomputed) == Web3.to_bytes(hexstr=body.claimed_commitment)
 
     on_chain_registered = False
     on_chain_revoked = None

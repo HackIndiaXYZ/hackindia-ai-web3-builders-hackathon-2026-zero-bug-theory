@@ -19,7 +19,7 @@ from .chain import ChainNotConfigured, get_chain_client
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .reconciliation import reconcile_pending
-from .routers import audit, auth, blockchain, carepool, health, inference, registry
+from .routers import audit, auth, blockchain, carepool, health, registry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("anemiascan")
@@ -27,36 +27,17 @@ logger = logging.getLogger("anemiascan")
 RECONCILE_INTERVAL_SECONDS = 30
 
 
-def _warm_up_model(device: str) -> None:
-    """Load the weights and run one real forward pass at startup.
-
-    This used to feed a flat 128x128 colour JPEG through the provider. That no
-    longer exercises anything: a constant-colour image is refused by the
-    plausibility gate before the encoders ever run, so the ~150MB of weights
-    would stay cold and the first real user would pay the load cost. Drive the
-    encoders directly instead — it is both faster and a stricter check that the
-    bundle is actually usable.
+def _build_warmup_image_bytes() -> bytes:
+    """A tiny synthetic JPEG used only to force the real model to load (and
+    run one full forward pass) at startup, so a missing/broken bundle fails
+    loudly in the logs instead of on a user's first request.
     """
-    import numpy as np
-    import torch
+    buffer = io.BytesIO()
+    Image.new("RGB", (128, 128), color=(150, 110, 110)).save(buffer, format="JPEG")
+    return buffer.getvalue()
 
-    from .ml.predictor import get_predictor
 
-    predictor = get_predictor(device)
-    with torch.inference_mode():
-        dummy_b3 = torch.zeros(1, 3, 300, 300, device=predictor.device)
-        dummy_conv = torch.zeros(1, 3, 224, 224, device=predictor.device)
-        efficientnet_embedding = predictor.efficientnet.encode(dummy_b3)
-        convnext_embedding = predictor.convnext.encode(dummy_conv)
-        predictor.efficientnet.classify_embedding(efficientnet_embedding)
-        predictor.convnext.classify_embedding(convnext_embedding)
-        features = torch.zeros(1, 32, device=predictor.device)
-        for head in predictor.gated_heads:
-            head(efficientnet_embedding, convnext_embedding, features)
-    # Exercise the stacker too, so a broken pickle fails here and not later.
-    predictor.stacker["model"].predict_proba(
-        predictor.stacker["scaler"].transform(np.zeros((1, 34)))
-    )
+_WARMUP_IMAGE_BYTES = _build_warmup_image_bytes()
 
 
 async def _reconciliation_loop() -> None:
@@ -94,44 +75,16 @@ async def lifespan(app: FastAPI):
     except ChainNotConfigured as err:
         logger.warning("MST chain adapter not ready yet: %s", err)
 
-    if not settings.firebase_project_id:
-        logger.error(
-            "FIREBASE_PROJECT_ID is unset, so sign-in cannot be verified and every "
-            "screening request will be refused with 503. Set it in backend/.env."
-        )
-
     if settings.inference_provider == "real":
         try:
-            await run_in_threadpool(_warm_up_model, settings.ml_device)
-            from .ml.manifest import get_model_hash
-            from .ml.predictor import MODEL_VERSION
+            from .inference import get_inference_provider
 
-            derived = get_model_hash()
-            logger.info(
-                "AnemiaScan model ready: version=%s hash=%s device=%s",
-                MODEL_VERSION,
-                derived,
-                settings.ml_device,
-            )
-            # A pinned MST_REAL_MODEL_HASH silently overrides the hash derived
-            # from the weights on disk. If someone pins a stale value, every
-            # screening is anchored on-chain under a model identity that does
-            # not match the model that actually produced it — which defeats the
-            # entire point of anchoring it. Refuse to let that pass quietly.
-            pinned = settings.mst_real_model_hash
-            if pinned and pinned.lower() != derived.lower():
-                logger.error(
-                    "MST_REAL_MODEL_HASH is pinned to %s but the installed bundle derives %s. "
-                    "Screenings would be anchored under a model hash that does not match the "
-                    "weights in app/ml/model_assets/. Clear the pin, or re-run "
-                    "`python -m app.ml.manifest` and register the derived hash on-chain.",
-                    pinned,
-                    derived,
-                )
+            provider = get_inference_provider(settings)
+            await run_in_threadpool(provider.run, image_bytes=_WARMUP_IMAGE_BYTES)
+            logger.info("AnemiaScan V3.1 model loaded and warmed up (device=%s)", settings.ml_device)
         except Exception:  # noqa: BLE001 — must never crash startup; the endpoint will 503 until fixed
             logger.exception(
-                "Real inference model failed to load at startup — "
-                "POST /inference/predict will 503 until fixed"
+                "Real inference model failed to load at startup — /registry/screenings will 503 until fixed"
             )
 
     task = asyncio.create_task(_reconciliation_loop())
@@ -162,7 +115,6 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(blockchain.router)
 app.include_router(auth.router)
-app.include_router(inference.router)
 app.include_router(registry.router)
 app.include_router(carepool.router)
 app.include_router(audit.router)
@@ -172,20 +124,3 @@ app.include_router(audit.router)
 async def chain_not_configured_handler(request: Request, exc: ChainNotConfigured) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": f"MST chain not configured: {exc}"})
 
-
-@app.exception_handler(ValueError)
-async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
-    """A malformed hex field used to escape as a 500 with a plain-text body the
-    frontend could not parse. Return JSON, and treat it as a client error."""
-    logger.warning("rejected malformed input on %s: %s", request.url.path, exc)
-    return JSONResponse(status_code=422, content={"detail": f"invalid input: {exc}"})
-
-
-@app.exception_handler(Exception)
-async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Never leak a traceback or a plain-text body to the client."""
-    logger.exception("unhandled error on %s", request.url.path)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error. The incident has been logged."},
-    )

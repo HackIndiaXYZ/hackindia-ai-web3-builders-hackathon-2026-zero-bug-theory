@@ -7,9 +7,8 @@
  * never linger in the accessibility tree or take focus. Multiple panels may be
  * open at once, and a single control expands or collapses the whole set.
  *
- * Copy rule: every answer stays inside what an image-based screen can honestly
- * claim. No accuracy percentages, no citations, no regulatory language, and no
- * haemoglobin figure — this tool photographs tissue, it does not measure blood.
+ * Copy rule: every answer stays inside what an image heuristic can honestly
+ * claim. No accuracy percentages, no citations, no regulatory language.
  * -------------------------------------------------------------------------- */
 
 import * as React from 'react'
@@ -31,8 +30,8 @@ const ENTRIES: FaqEntry[] = [
     id: 'what-it-measures',
     question: 'What is AnemiaScan actually measuring?',
     answer: [
-      'It measures colour, not blood. When you capture your lower eyelid, the photo is uploaded over HTTPS; our server locates the exposed palpebral conjunctiva inside it, checks the crop is something the model can actually read, and scores that crop with a trained two-CNN ensemble.',
-      'What comes back is a calibrated screening probability — how anaemia-like this photograph looks — judged against a fixed operating threshold to give one of three outcomes: lower risk, higher risk, or uncertain when the probability sits too close to that threshold to call. No haemoglobin figure appears anywhere in the app, because nothing here can measure one.',
+      'It measures colour, not blood. When you capture your lower eyelid, the app reads the pixels of the exposed palpebral conjunctiva and scores five things: pallor (how washed-out the tissue looks), redness (how much of the signal sits in the red channel), colour saturation, vascular texture (how much fine detail is visible), and illumination.',
+      'Those five readings are blended into a single 0–100 screening score and mapped to one of three bands — Low, Moderate or Elevated. The haemoglobin range you see is an illustrative interval derived from that score, not a measurement of your blood.',
     ],
   },
   {
@@ -47,8 +46,8 @@ const ENTRIES: FaqEntry[] = [
     id: 'accuracy',
     question: 'How accurate is it?',
     answer: [
-      'We will not give you a number, because an honest one does not exist for this build. AnemiaScan runs a real trained model, but not one validated against laboratory haemoglobin results in a clinical study. Eyelid-pallor screening is an active research area, and the published work in that area does not transfer to this model running on an unknown phone camera in unknown light.',
-      'What the app does instead is show its work: the calibrated probability, the fixed threshold it was judged against, the measured quality of your capture, and an explicit uncertain outcome when the two are too close to separate. Treat a result as a prompt to get tested, never as a number to act on.',
+      'We will not give you a number, because an honest one does not exist for this build. AnemiaScan runs a transparent colour-and-texture heuristic, not a model validated against laboratory haemoglobin results in a clinical study. Eyelid-pallor screening is an active research area, and the published work in that area does not transfer to an unvalidated heuristic running on an unknown phone camera.',
+      'What the app does instead is show its work: every signal, its weight, and a confidence figure that drops when the capture quality drops. Treat a result as a prompt to get tested, never as a number to act on.',
     ],
   },
   {
@@ -63,39 +62,31 @@ const ENTRIES: FaqEntry[] = [
     id: 'privacy',
     question: 'Is my photo uploaded anywhere?',
     answer: [
-      'Yes — the captured photo is sent securely to AnemiaScan’s backend, where a real trained AI model analyses it in memory. The image is never written to disk or a database; only a sha256 hash of it and your coded result — the outcome, the screening probability and the capture-quality score — are kept.',
+      'Yes — the captured photo is sent securely to AnemiaScan’s backend, where a real trained AI model analyses it in memory. The image is never written to disk or a database; only a sha256 hash of it and your coded result (risk band, confidence) are kept. Your browser also runs a supplementary colour and texture estimate locally, with no network call, purely for the Insights screen.',
       'Scan history itself is stored in this browser only, using local storage, and the Clear history action removes it immediately. Using AnemiaScan does require a free account, but your history is not synced to it or shared with a third party.',
     ],
   },
   {
-    id: 'higher-risk-result',
-    question: 'My result says Higher risk. What should I do?',
+    id: 'elevated-result',
+    question: 'My result says Elevated Risk. What should I do?',
     answer: [
       'Book a haemoglobin test — a full blood count is cheap, fast and definitive, and it is the only thing that can confirm or rule out anaemia. Bring the screening result and any symptoms you have noticed: fatigue that rest does not fix, breathlessness on stairs, dizziness, cold hands, pica, or heavy periods.',
       'Do not start iron supplements on your own. The wrong dose can cause real harm, and self-treating can mask a cause that needs finding — blood loss, a malabsorption problem or a vitamin deficiency all look similar from the outside. And if you have chest pain, fainting, a racing heart or visible blood loss, treat that as urgent and seek care now.',
     ],
   },
   {
-    id: 'lower-risk-result',
-    question: 'My result says Lower risk. Am I in the clear?',
+    id: 'low-result',
+    question: 'My result says Low Risk. Am I in the clear?',
     answer: [
-      'Not necessarily. A photo can only see the colour of one small patch of tissue at one moment. Early or mild anaemia can look completely normal, and a well-lit, slightly overexposed capture can push the probability down.',
+      'Not necessarily. A photo can only see the colour of one small patch of tissue at one moment. Early or mild anaemia can look completely normal, and a well-lit, slightly overexposed capture can push the score down.',
       'Symptoms outrank any screening result. If you feel unusually tired, breathless or lightheaded, ask for a blood test regardless of what this app said.',
-    ],
-  },
-  {
-    id: 'uncertain-result',
-    question: 'My result says Uncertain. Did the scan fail?',
-    answer: [
-      'No — the scan worked and the model declined to call it. Uncertain means the calibrated probability landed inside the margin around the operating threshold, or the two candidate models disagreed with each other. Saying so is more useful than rounding a coin-flip to whichever answer happens to be nearer.',
-      'Read it as neither reassurance nor alarm. Re-scan in bright, indirect daylight to see whether it settles, and let your symptoms decide whether to ask for a blood test — they outrank anything this app reports.',
     ],
   },
   {
     id: 'limits',
     question: 'Who should not rely on this at all?',
     answer: [
-      'Anyone who is pregnant, an infant or young child, someone with a known blood disorder such as thalassaemia or sickle cell disease, anyone on dialysis or in cancer treatment, and anyone with an eye infection, conjunctivitis, recent eye injury or eye surgery. In all of those cases the tissue colour, the risk itself or both fall well outside anything this model was trained on.',
+      'Anyone who is pregnant, an infant or young child, someone with a known blood disorder such as thalassaemia or sickle cell disease, anyone on dialysis or in cancer treatment, and anyone with an eye infection, conjunctivitis, recent eye injury or eye surgery. In all of those cases the tissue colour, the risk itself or both fall well outside what a generic heuristic can reason about.',
       'The same goes for anyone acting on a result in place of care. This is a nudge toward a blood test, and it is only useful if the nudge leads to one.',
     ],
   },

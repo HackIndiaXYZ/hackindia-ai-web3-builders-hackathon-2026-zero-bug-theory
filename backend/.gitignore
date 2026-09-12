@@ -8,23 +8,6 @@ __pycache__/
 *.sqlite3
 
 # AnemiaScan V3.1 model weights (~150MB; base_models/convnext_tiny_best.pth
-# alone is 111MB, over GitHub's 100MB hard file limit). Never commit these.
-#
-# This used to ignore the whole `app/ml/model_assets/` directory, which also
-# swallowed the small JSON configs and BUNDLE_README.md — including the very
-# README the line below tells you to read. A fresh clone therefore got an empty
-# directory and no way to find out what belonged in it. Only the binaries are
-# ignored now; runtime_config.json, thresholds.json, calibration.json,
-# inference_contract.json and BUNDLE_README.md are tracked, so the operating
-# threshold, the calibration parameters and the inference contract are
-# reviewable without possessing the weights.
-#
-# The weights themselves are obtained separately and MUST be verified against
-# the SHA-256 digests recorded in ../MODEL_CARD.md before use: the on-chain
-# modelHash is keccak256 of that manifest (app/ml/manifest.py), so a substituted
-# or truncated checkpoint silently changes the model's identity and every
-# commitment anchored under it. `python -m app.ml.manifest` prints the digests
-# of whatever is actually installed — compare, don't assume.
-app/ml/model_assets/**/*.pth
-app/ml/model_assets/**/*.joblib
-app/ml/model_assets/**/*.npz
+# alone is 111MB, over GitHub's 100MB hard file limit). Never commit these —
+# see app/ml/model_assets/BUNDLE_README.md for how to obtain the bundle.
+app/ml/model_assets/
