@@ -20,6 +20,8 @@ export type ScreenId =
   | 'learn'
   | 'blockchain'
   | 'doctor'
+  | 'patient-auth'
+  | 'patient-profile'
 
 /**
  * The three screening bands the V4 result reports. These are risk *bands*,
@@ -119,7 +121,15 @@ export interface DoctorReport {
   analysis: ScanAnalysis
   submittedAt: string
   status: 'Awaiting Review' | 'Reviewed'
+  patientProfile?: PatientProfile
   doctorAdvice?: string
+  clinicalAssessment?: 'Safe' | 'Unsafe'
   reviewedAt?: string
 }
 
+export interface PatientProfile {
+  name: string
+  age: number
+  gender: string
+  medicalNotes?: string
+}

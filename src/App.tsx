@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CloudOff } from 'lucide-react'
 import type { User } from 'firebase/auth'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { doc, getDoc } from 'firebase/firestore'
 
 import { cn } from '@/lib/utils'
 import { AuthScreen } from '@/src/components/auth-screen'
@@ -41,9 +42,9 @@ import { ConsentGate, hasAcknowledged } from '@/src/components/consent-gate'
 import { DoctorPortal } from '@/src/components/doctor-portal'
 import { InstallPrompt } from '@/src/components/install-prompt'
 import { SiteHeader } from '@/src/components/site-header'
-import { auth, isFirebaseConfigured } from '@/src/lib/firebase'
+import { auth, db, isFirebaseConfigured } from '@/src/lib/firebase'
 import { clearHistory, deleteScan, loadHistory, saveScan } from '@/src/lib/history'
-import type { CapturedImage, DoctorReport, ScanAnalysis, ScreenId } from '@/src/lib/types'
+import type { CapturedImage, DoctorReport, ScanAnalysis, ScreenId, PatientProfile } from '@/src/lib/types'
 import { HistoryScreen } from '@/src/screens/history-screen'
 import { HomeScreen } from '@/src/screens/home-screen'
 import { InconclusiveScreen } from '@/src/screens/inconclusive-screen'
@@ -52,6 +53,8 @@ import { LearnScreen } from '@/src/screens/learn-screen'
 import { ProcessingScreen } from '@/src/screens/processing-screen'
 import { ResultScreen } from '@/src/screens/result-screen'
 import { ScanScreen } from '@/src/screens/scan-screen'
+import { PatientAuthScreen } from '@/src/screens/patient-auth-screen'
+import { PatientProfileScreen } from '@/src/screens/patient-profile-screen'
 
 /** Screens that take over the viewport: no header, no tab bar, no page chrome. */
 const IMMERSIVE_SCREENS: ScreenId[] = ['scan', 'processing']
@@ -78,6 +81,16 @@ const SCREEN_IDS: ScreenId[] = [
   'doctor',
 ]
 
+/**
+ * Below this confidence the capture is not worth scoring. `tooDark` in
+ * src/lib/analyze.ts only catches an *under*-exposed frame; a blown-out or
+ * badly framed one keeps tooDark = false yet lands in single-digit confidence,
+ * where the score is noise. Showing "Elevated Risk 97" off a white frame would
+ * be the single most misleading thing this app could do, so both cases route to
+ * the inconclusive screen and neither is written to history.
+ */
+const MIN_SCORABLE_CONFIDENCE = 25
+
 /** Only these are safe to land on from a cold URL — the rest need session state. */
 const DEEP_LINKABLE: ScreenId[] = ['home', 'learn', 'history', 'blockchain']
 
@@ -87,12 +100,14 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   scan: 'Camera',
   processing: 'Analysing your scan',
   result: 'Your screening result',
-  insights: 'V4 model insights',
+  insights: 'Signal insights',
   inconclusive: 'Scan inconclusive',
   history: 'Scan history',
   learn: 'Learn about anaemia',
   blockchain: 'Proof and care',
   doctor: 'Doctor portal',
+  'patient-auth': 'Patient sign in',
+  'patient-profile': 'Patient Profile',
 }
 
 interface ShellHistoryState {
@@ -132,12 +147,27 @@ export default function App() {
 
   /* ---- Firebase auth gate ------------------------------------------------ */
   const [user, setUser] = useState<User | null>(null)
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured)
 
   useEffect(() => {
     if (!auth) return
-    return onAuthStateChanged(auth, (nextUser) => {
+    return onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser)
+      if (nextUser && db) {
+        try {
+          const docSnap = await getDoc(doc(db, 'patients', nextUser.uid))
+          if (docSnap.exists()) {
+            setPatientProfile(docSnap.data() as PatientProfile)
+          } else {
+            setPatientProfile(null)
+          }
+        } catch (e) {
+          setPatientProfile(null)
+        }
+      } else {
+        setPatientProfile(null)
+      }
       setAuthReady(true)
     })
   }, [])
@@ -178,6 +208,17 @@ export default function App() {
     }
     setScreen(next)
   }, [])
+
+  /* ---- patient auth auto-redirect ---------------------------------------- */
+  useEffect(() => {
+    if (screen === 'patient-auth' && user) {
+      if (patientProfile === null) {
+        replace('patient-profile')
+      } else if (patientProfile !== undefined) {
+        replace('scan')
+      }
+    }
+  }, [screen, user, patientProfile, replace])
 
   /** Pop one entry when we own one, otherwise fall back inside the app. */
   const back = useCallback(
@@ -269,6 +310,17 @@ export default function App() {
 
   const goHome = useCallback(() => push('home'), [push])
   const goScan = useCallback(() => push('scan'), [push])
+  
+  const handleBeginScan = useCallback(() => {
+    if (!user) {
+      push('patient-auth')
+    } else if (!patientProfile) {
+      push('patient-profile')
+    } else {
+      push('scan')
+    }
+  }, [user, patientProfile, push])
+
   const goHistory = useCallback(() => push('history'), [push])
   const goLearn = useCallback(() => push('learn'), [push])
   const goBlockchain = useCallback(() => push('blockchain'), [push])
@@ -283,20 +335,20 @@ export default function App() {
     [replace],
   )
 
-  /** ProcessingScreen has received and validated the deterministic V4 result. */
+  /** ProcessingScreen has already submitted the frame to the real screening
+   *  backend (src/lib/api.ts) and merged the result onto the on-device
+   *  heuristic by the time this fires — see src/screens/processing-screen.tsx. */
   const handleProcessingDone = useCallback(
     (result: ScanAnalysis) => {
       setAnalysis(result)
+      if (result.tooDark || result.confidence < MIN_SCORABLE_CONFIDENCE) {
+        // A rejected frame is never written to history.
+        setInconclusiveInfo({ reason: 'quality' })
+        replace('inconclusive')
+        return
+      }
       setHistory(saveScan(result))
       replace('result')
-    },
-    [replace],
-  )
-
-  const handleRecaptureRequired = useCallback(
-    (message: string) => {
-      setInconclusiveInfo({ reason: 'quality', message })
-      replace('inconclusive')
     },
     [replace],
   )
@@ -342,20 +394,21 @@ export default function App() {
           id: `R-${current.length + 1}-${analysis.id}`,
           patientLabel,
           analysis: { ...analysis },
+          patientProfile: patientProfile || undefined,
           submittedAt: new Date().toISOString(),
           status: 'Awaiting Review',
         },
         ...current,
       ])
     },
-    [analysis],
+    [analysis, patientProfile],
   )
 
-  const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string) => {
+  const saveDoctorAdvice = useCallback((reportId: string, doctorAdvice: string, clinicalAssessment: 'Safe' | 'Unsafe') => {
     setReports((current) =>
       current.map((report) =>
         report.id === reportId
-          ? { ...report, doctorAdvice, status: 'Reviewed', reviewedAt: new Date().toISOString() }
+          ? { ...report, doctorAdvice, clinicalAssessment, status: 'Reviewed', reviewedAt: new Date().toISOString() }
           : report,
       ),
     )
@@ -388,7 +441,7 @@ export default function App() {
           onLearn={goLearn}
           onBlockchain={goBlockchain}
           onHistory={goHistory}
-          onScan={goScan}
+          onScan={handleBeginScan}
           onDoctorPortal={goDoctor}
           active={screen}
           historyCount={historyCount}
@@ -408,14 +461,14 @@ export default function App() {
         <div key={screen} className={cn('flex flex-1 flex-col', !immersive && 'animate-fade-in')}>
           {screen === 'home' && (
             <HomeScreen
-              onStart={goScan}
+              onStart={handleBeginScan}
               onViewHistory={goHistory}
               onLearn={goLearn}
               history={history}
             />
           )}
 
-          {screen === 'learn' && <LearnScreen onBack={() => back('home')} onStart={goScan} />}
+          {screen === 'learn' && <LearnScreen onBack={() => back('home')} onStart={handleBeginScan} />}
 
           {screen === 'blockchain' && <BlockchainScreen analysis={analysis} onBack={() => back('home')} />}
 
@@ -428,7 +481,6 @@ export default function App() {
               capture={capture}
               onDone={handleProcessingDone}
               onError={handleProcessingError}
-              onRecapture={handleRecaptureRequired}
             />
           )}
 
@@ -445,7 +497,7 @@ export default function App() {
             <ResultScreen
               analysis={analysis}
               onViewInsights={() => push('insights')}
-              onScanAgain={goScan}
+              onScanAgain={handleBeginScan}
               onViewHistory={goHistory}
               onViewBlockchain={goBlockchain}
               onSendToDoctor={sendToDoctor}
@@ -460,7 +512,7 @@ export default function App() {
             <HistoryScreen
               items={history}
               onBack={() => back('home')}
-              onStart={goScan}
+              onStart={handleBeginScan}
               onOpen={handleOpenFromHistory}
               onDelete={handleDeleteScan}
               onClear={handleClearHistory}
@@ -479,6 +531,25 @@ export default function App() {
             ) : (
               <AuthScreen onBack={() => back('home')} />
             ))}
+
+          {screen === 'patient-auth' && (
+            <PatientAuthScreen onBack={() => back('home')} />
+          )}
+
+          {screen === 'patient-profile' && (
+            <PatientProfileScreen 
+              onBack={() => back('home')} 
+              onComplete={() => {
+                // Manually set patient profile so we don't have to wait for onAuthStateChanged refetch
+                if (auth?.currentUser) {
+                  getDoc(doc(db!, 'patients', auth.currentUser.uid)).then(snap => {
+                    if (snap.exists()) setPatientProfile(snap.data() as PatientProfile)
+                  })
+                }
+                replace('scan')
+              }} 
+            />
+          )}
         </div>
       </main>
 
@@ -486,7 +557,7 @@ export default function App() {
         <BottomNav
           active={screen}
           onHome={goHome}
-          onScan={goScan}
+          onScan={handleBeginScan}
           onHistory={goHistory}
           onLearn={goLearn}
           historyCount={historyCount}
@@ -538,4 +609,3 @@ function OfflineNotice() {
     </div>
   )
 }
-
