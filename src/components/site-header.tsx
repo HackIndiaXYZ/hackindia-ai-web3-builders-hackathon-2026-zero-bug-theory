@@ -1,7 +1,7 @@
 import { AppLogo } from '@/src/components/app-logo'
 import { HowItWorksSheet } from '@/src/components/how-it-works-sheet'
 
-export function SiteHeader({ onHome }: { onHome: () => void }) {
+export function SiteHeader({ onHome, onDoctorPortal }: { onHome: () => void; onDoctorPortal: () => void }) {
   return (
     <header className="w-full border-b border-border/60">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 lg:px-10">
@@ -23,6 +23,13 @@ export function SiteHeader({ onHome }: { onHome: () => void }) {
               How it works
             </button>
           </HowItWorksSheet>
+          <button
+            type="button"
+            onClick={onDoctorPortal}
+            className="text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
+            Doctor portal
+          </button>
         </nav>
       </div>
     </header>
