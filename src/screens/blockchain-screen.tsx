@@ -19,7 +19,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { getBlockchainHealth, getScreeningProof, type BlockchainHealth, type ScreeningProof } from '@/src/lib/api'
+import {
+  getBlockchainConfig,
+  getClinicAuthorization,
+  getOnChainPool,
+  getScreeningProof,
+  type BlockchainHealth,
+  type OnChainPool,
+  type ScreeningProof,
+} from '@/src/lib/api'
 import {
   connectMstWallet,
   createPoolFromWallet,
@@ -104,7 +112,7 @@ export function BlockchainScreen({ analysis, onBack }: BlockchainScreenProps) {
   const [connecting, setConnecting] = useState(false)
 
   useEffect(() => {
-    void getBlockchainHealth().then(setHealth).catch((error: unknown) => setHealthError(error instanceof Error ? error.message : 'Blockchain status is unavailable.'))
+    void getBlockchainConfig().then(setHealth).catch((error: unknown) => setHealthError(error instanceof Error ? error.message : 'Blockchain status is unavailable.'))
   }, [])
 
   const connect = async () => {
@@ -210,11 +218,13 @@ function SponsorWorkspace({ health, wallet, connecting, onConnect }: { health: B
   const [busy, setBusy] = useState<'create' | 'fund' | null>(null)
   const [tx, setTx] = useState<Hex | null>(null)
   const [error, setError] = useState('')
+  const [onChainPool, setOnChainPool] = useState<OnChainPool | null>(null)
   const address = health?.carePoolAddress ?? ''
   const walletLabel = useMemo(() => wallet ? shortHash(wallet, 6) : 'Connect wallet', [wallet])
 
   const create = async () => { setBusy('create'); setError(''); try { setTx(await createPoolFromWallet(address)) } catch (err) { setError(err instanceof Error ? err.message : 'Pool creation failed.') } finally { setBusy(null) } }
   const fund = async () => { setBusy('fund'); setError(''); try { if (!/^\d+$/.test(poolId) || BigInt(poolId) < 1n) throw new Error('Enter a valid on-chain pool ID.'); if (!Number(amount) || Number(amount) <= 0) throw new Error('Enter a positive MSTC amount.'); setTx(await fundPoolFromWallet(address, BigInt(poolId), amount)) } catch (err) { setError(err instanceof Error ? err.message : 'Funding failed.') } finally { setBusy(null) } }
+  const loadPool = async () => { setError(''); try { if (!/^\d+$/.test(poolId) || BigInt(poolId) < 1n) throw new Error('Enter a valid on-chain pool ID.'); setOnChainPool(await getOnChainPool(poolId)) } catch (err) { setOnChainPool(null); setError(err instanceof Error ? err.message : 'Pool lookup failed.') } }
 
   return <div className="grid gap-5 lg:grid-cols-[1.05fr_.95fr]">
     <Card className="border-primary/20"><CardHeader><CardTitle className="flex items-center gap-2"><Landmark className="size-5 text-primary" /> Sponsor a care pool</CardTitle><CardDescription>Your wallet creates the pool and funds it directly. The backend cannot spend or withdraw your funds.</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">
@@ -225,8 +235,10 @@ function SponsorWorkspace({ health, wallet, connecting, onConnect }: { health: B
     </CardContent></Card>
     <Card><CardHeader><CardTitle>Fund an existing pool</CardTitle><CardDescription>Pool IDs are public on MSTScan. Fund only a pool you recognise.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
       <label className="text-xs font-medium" htmlFor="pool-id">On-chain pool ID</label><input id="pool-id" inputMode="numeric" value={poolId} onChange={(e) => setPoolId(e.target.value)} placeholder="e.g. 1" className="ring-focus h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none" />
+      <Button variant="ghost" onClick={() => void loadPool()} disabled={!poolId || busy !== null} className="h-9 justify-start rounded-lg px-2 text-primary"><ShieldCheck className="size-3.5" /> Check live pool state</Button>
       <label className="text-xs font-medium" htmlFor="pool-amount">Amount (MSTC)</label><input id="pool-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 5" className="ring-focus h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none" />
       <Button variant="outline" onClick={() => void fund()} disabled={!wallet || !address || busy !== null} className="h-11 rounded-xl">{busy === 'fund' ? <LoaderCircle className="size-4 animate-spin" /> : <Landmark className="size-4" />} Fund pool</Button>
+      {onChainPool ? <div className="rounded-xl border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground"><p className="font-semibold text-foreground">Pool #{onChainPool.poolId} · {onChainPool.active ? 'Active' : 'Inactive'}</p><p className="mt-1">Sponsor: <span className="font-mono">{shortHash(onChainPool.sponsorAddress)}</span></p><p>Available: <span className="font-mono">{onChainPool.availableWei}</span> wei</p><p>Reserved: <span className="font-mono">{onChainPool.totalReservedWei}</span> wei</p></div> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     </CardContent></Card>
   </div>
@@ -237,12 +249,17 @@ function ClinicWorkspace({ health, wallet, connecting, onConnect }: { health: Bl
   const [busy, setBusy] = useState(false)
   const [tx, setTx] = useState<Hex | null>(null)
   const [error, setError] = useState('')
+  const [authorized, setAuthorized] = useState<boolean | null>(null)
   const address = health?.carePoolAddress ?? ''
-  const redeem = async () => { setBusy(true); setError(''); try { setTx(await redeemCarePassFromWallet(address, decodeCarePassToken(token))) } catch (err) { setError(err instanceof Error ? err.message : 'Redemption failed.') } finally { setBusy(false) } }
+  useEffect(() => {
+    if (!wallet || !address) { setAuthorized(null); return }
+    void getClinicAuthorization(wallet).then((result) => setAuthorized(result.authorized)).catch((err: unknown) => { setAuthorized(null); setError(err instanceof Error ? err.message : 'Could not verify clinic authorization.') })
+  }, [wallet, address])
+  const redeem = async () => { setBusy(true); setError(''); try { if (!authorized) throw new Error('This wallet is not an authorized clinic on the CarePool contract.'); setTx(await redeemCarePassFromWallet(address, decodeCarePassToken(token))) } catch (err) { setError(err instanceof Error ? err.message : 'Redemption failed.') } finally { setBusy(false) } }
 
   return <div className="grid gap-5 lg:grid-cols-[.8fr_1.2fr]">
-    <Card className="border-primary/20"><CardHeader><CardTitle className="flex items-center gap-2"><Stethoscope className="size-5 text-primary" /> Authorized clinic</CardTitle><CardDescription>Redemption is signed by your clinic wallet. Funds are credited by the contract, not by the backend.</CardDescription></CardHeader><CardContent><WalletStatus wallet={wallet} label={wallet ? shortHash(wallet, 6) : 'Connect clinic wallet'} connecting={connecting} onConnect={onConnect} /><p className="mt-4 text-xs leading-relaxed text-muted-foreground">Your wallet must already be authorised on the CarePool contract. This screen never sends a CarePass token to the backend.</p></CardContent></Card>
-    <Card><CardHeader><CardTitle>Redeem a CarePass</CardTitle><CardDescription>Paste the one-time token supplied by the patient. Confirm the service before submitting it.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3"><label htmlFor="care-pass" className="text-xs font-medium">CarePass token</label><textarea id="care-pass" rows={4} value={token} onChange={(e) => setToken(e.target.value)} placeholder="ANEMIASCAN-CAREPASS|1|…" className="ring-focus resize-y rounded-xl border border-border bg-background p-3 font-mono text-xs outline-none" /><Button size="lg" onClick={() => void redeem()} disabled={!wallet || !address || !token.trim() || busy} className="h-12 rounded-xl">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Stethoscope className="size-4" />} Redeem with clinic wallet</Button>{error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}<TxResult hash={tx} label="Redemption submitted" /></CardContent></Card>
+    <Card className="border-primary/20"><CardHeader><CardTitle className="flex items-center gap-2"><Stethoscope className="size-5 text-primary" /> Authorized clinic</CardTitle><CardDescription>Redemption is signed by your clinic wallet. Funds are credited by the contract, not by the backend.</CardDescription></CardHeader><CardContent><WalletStatus wallet={wallet} label={wallet ? shortHash(wallet, 6) : 'Connect clinic wallet'} connecting={connecting} onConnect={onConnect} /><p className="mt-4 text-xs leading-relaxed text-muted-foreground">Your wallet must already be authorised on the CarePool contract. This screen never sends a CarePass token to the backend.</p>{wallet ? <p className={cn('mt-3 rounded-lg px-3 py-2 text-xs font-medium', authorized === true ? 'bg-safe/10 text-safe' : authorized === false ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground')}>{authorized === true ? 'Verified by backend: this clinic wallet is authorised.' : authorized === false ? 'This wallet is not authorised for CarePool redemption.' : 'Checking clinic authorisation on MST…'}</p> : null}</CardContent></Card>
+    <Card><CardHeader><CardTitle>Redeem a CarePass</CardTitle><CardDescription>Paste the one-time token supplied by the patient. Confirm the service before submitting it.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3"><label htmlFor="care-pass" className="text-xs font-medium">CarePass token</label><textarea id="care-pass" rows={4} value={token} onChange={(e) => setToken(e.target.value)} placeholder="ANEMIASCAN-CAREPASS|1|…" className="ring-focus resize-y rounded-xl border border-border bg-background p-3 font-mono text-xs outline-none" /><Button size="lg" onClick={() => void redeem()} disabled={!wallet || !address || !token.trim() || !authorized || busy} className="h-12 rounded-xl">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Stethoscope className="size-4" />} Redeem with clinic wallet</Button>{error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}<TxResult hash={tx} label="Redemption submitted" /></CardContent></Card>
   </div>
 }
 

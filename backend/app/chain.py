@@ -232,6 +232,12 @@ class MstChainClient:
     def pass_id_by_hash(self, pass_hash: str) -> int:
         return self.care_pool.functions.passIdByHash(pass_hash).call()
 
+    def is_clinic_authorized(self, clinic_address: str) -> bool:
+        """Public read used by the browser workspace before it enables a
+        clinic-signed redemption. This never trusts a client-provided role.
+        """
+        return bool(self.care_pool.functions.authorizedClinic(to_checksum_address(clinic_address)).call())
+
     # -- CarePool: writes (demo-mode backend-signed; see module docstring) --
 
     def create_pool(self, role: Role = "issuer") -> str:
