@@ -1,13 +1,59 @@
-import { useState } from 'react'
+import { type FormEvent, useState } from 'react'
 import { LogIn, ShieldCheck } from 'lucide-react'
-import { signInWithPopup } from 'firebase/auth'
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  updateProfile,
+} from 'firebase/auth'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/src/components/app-logo'
 import { auth, googleProvider, isFirebaseConfigured } from '@/src/lib/firebase'
 
+type AuthMode = 'login' | 'signup'
+
 export function AuthScreen() {
   const [isSigningIn, setIsSigningIn] = useState(false)
+  const [mode, setMode] = useState<AuthMode>('login')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+
+  const switchMode = (nextMode: AuthMode) => {
+    setMode(nextMode)
+    setError('')
+  }
+
+  const handleEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!auth) return
+
+    setError('')
+    setIsSigningIn(true)
+
+    try {
+      if (mode === 'signup') {
+        const result = await createUserWithEmailAndPassword(auth, email, password)
+        await updateProfile(result.user, { displayName: name.trim() })
+      } else {
+        await signInWithEmailAndPassword(auth, email, password)
+      }
+    } catch (authError) {
+      const errorCode = authError instanceof Error ? authError.message : ''
+      if (errorCode.includes('auth/invalid-credential')) {
+        setError('The email or password is incorrect.')
+      } else if (errorCode.includes('auth/email-already-in-use')) {
+        setError('An account already exists for this email. Try logging in.')
+      } else if (errorCode.includes('auth/weak-password')) {
+        setError('Use a password with at least 6 characters.')
+      } else {
+        setError('We could not complete authentication. Check your details and try again.')
+      }
+    } finally {
+      setIsSigningIn(false)
+    }
+  }
 
   const handleGoogleSignIn = async () => {
     if (!auth) return
@@ -41,18 +87,94 @@ export function AuthScreen() {
             Your health, in focus.
           </h1>
           <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted-foreground">
-            Sign in to securely access your screening history and continue to the camera check.
+            {mode === 'login'
+              ? 'Sign in securely to access your screening history and continue to the camera check.'
+              : 'Create a secure account to save your screening history and insights.'}
           </p>
+
+          <div className="mt-8 grid w-full grid-cols-2 border-b border-border">
+            {(['login', 'signup'] as AuthMode[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => switchMode(option)}
+                className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
+                  mode === option
+                    ? 'border-primary text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {option === 'login' ? 'Login' : 'Sign up'}
+              </button>
+            ))}
+          </div>
+
+          <form className="mt-6 flex w-full flex-col gap-4 text-left" onSubmit={handleEmailAuth}>
+            {mode === 'signup' && (
+              <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
+                Name
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Your full name"
+                  autoComplete="name"
+                  required
+                  className="h-11 border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-ring/30"
+                />
+              </label>
+            )}
+            <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
+              Email
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+                required
+                className="h-11 border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-ring/30"
+              />
+            </label>
+            <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="At least 6 characters"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                minLength={6}
+                required
+                className="h-11 border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-ring/30"
+              />
+            </label>
+            <Button
+              type="submit"
+              size="lg"
+              className="mt-2 h-12 w-full rounded-none text-base"
+              disabled={isSigningIn || !isFirebaseConfigured}
+            >
+              {isSigningIn ? 'Securing your account...' : mode === 'login' ? 'Login' : 'Create account'}
+            </Button>
+          </form>
+
+          <div className="my-6 flex w-full items-center gap-3 text-xs uppercase tracking-[0.16em] text-muted-foreground/60">
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
+          </div>
 
           <Button
             type="button"
+            variant="outline"
             size="lg"
-            className="mt-8 h-12 w-full rounded-none text-base"
+            className="h-12 w-full rounded-none text-base"
             onClick={handleGoogleSignIn}
             disabled={isSigningIn || !isFirebaseConfigured}
           >
             <LogIn className="mr-2 h-4 w-4" />
-            {isSigningIn ? 'Opening secure sign-in...' : 'Continue with Google'}
+            Continue with Google
           </Button>
 
           {!isFirebaseConfigured && (
