@@ -109,6 +109,28 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+
+  .home-hero {
+    background:
+      radial-gradient(circle at 72% 42%, oklch(0.78 0.135 174 / 8%), transparent 28rem),
+      linear-gradient(115deg, oklch(0.155 0.014 260), oklch(0.18 0.025 250));
+  }
+
+  .home-hero-grid {
+    background-image: linear-gradient(oklch(1 0 0 / 4%) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(1 0 0 / 4%) 1px, transparent 1px);
+    background-size: 4rem 4rem;
+    mask-image: linear-gradient(to bottom, black, transparent 88%);
+  }
+
+  .home-hero-orbit {
+    animation: orbit-drift 14s ease-in-out infinite;
+  }
+
+  .home-guide-frame {
+    animation: frame-float 7s ease-in-out infinite;
+    transform: perspective(1000px) rotateY(-8deg) rotateX(3deg);
+  }
 }
 
 @keyframes scan-sweep {
@@ -167,6 +189,26 @@
   }
   100% {
     transform: translateX(100%);
+  }
+}
+
+@keyframes orbit-drift {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(0deg) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) rotate(8deg) scale(1.04);
+  }
+}
+
+@keyframes frame-float {
+  0%,
+  100% {
+    transform: perspective(1000px) rotateY(-8deg) rotateX(3deg) translateY(0);
+  }
+  50% {
+    transform: perspective(1000px) rotateY(-4deg) rotateX(5deg) translateY(-8px);
   }
 }
 
