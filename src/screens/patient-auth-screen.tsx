@@ -89,7 +89,7 @@ export function PatientAuthScreen({ onBack }: { onBack?: () => void }) {
         <div className="flex flex-col items-center text-center">
           <AppLogo className="mb-6 h-14 w-14" />
           <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary">AnemiaScan</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">Patient sign in</h1>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight">Patient / Doctors / Clinic</h1>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
             Sign in or create an account to start scanning and track your screening history.
           </p>
@@ -176,3 +176,4 @@ export function PatientAuthScreen({ onBack }: { onBack?: () => void }) {
     </main>
   )
 }
+
