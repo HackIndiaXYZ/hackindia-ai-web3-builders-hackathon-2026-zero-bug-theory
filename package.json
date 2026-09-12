@@ -17,6 +17,8 @@
     "clsx": "^2.1.1",
     "firebase": "^12.19.0",
     "heic2any": "^0.0.4",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.16.0",
     "motion": "^13.2.0",
     "react": "^19",
