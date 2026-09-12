@@ -31,7 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CloudOff } from 'lucide-react'
 import type { User } from 'firebase/auth'
-import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { getIdTokenResult, onAuthStateChanged, signOut } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 
 import { cn } from '@/lib/utils'
@@ -149,6 +149,7 @@ export default function App() {
 
   /* ---- Firebase auth gate ------------------------------------------------ */
   const [user, setUser] = useState<User | null>(null)
+  const [isClinician, setIsClinician] = useState(false)
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured)
   // The sign-in screen is shared by the scan and Proof & care flows. Keep
@@ -160,6 +161,16 @@ export default function App() {
     if (!auth) return
     return onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser)
+      if (nextUser) {
+        try {
+          const token = await getIdTokenResult(nextUser, true)
+          setIsClinician(token.claims.clinician === true)
+        } catch {
+          setIsClinician(false)
+        }
+      } else {
+        setIsClinician(false)
+      }
       if (nextUser && db) {
         try {
           const docSnap = await getDoc(doc(db, 'patients', nextUser.uid))
@@ -552,8 +563,10 @@ export default function App() {
             // around the whole app.
             (!authReady ? (
               <div className="min-h-dvh bg-background" />
-            ) : user ? (
+            ) : user && isClinician ? (
               <DoctorPortal reports={reports} onBack={() => back('home')} onSaveAdvice={saveDoctorAdvice} />
+            ) : user ? (
+              <ClinicianAccessDenied onSignOut={() => auth && signOut(auth)} onBack={() => back('home')} />
             ) : (
               <AuthScreen onBack={() => back('home')} />
             ))}
@@ -598,6 +611,22 @@ export default function App() {
         {announcement}
       </p>
     </div>
+  )
+}
+
+function ClinicianAccessDenied({ onSignOut, onBack }: { onSignOut: () => void; onBack: () => void }) {
+  return (
+    <main className="flex flex-1 items-center justify-center px-6 py-12">
+      <section className="w-full max-w-md border border-border bg-card/60 p-8 text-center shadow-[0_24px_80px_-40px_var(--primary)] sm:p-10">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary">Doctor portal</p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Clinician access required</h1>
+        <p className="mt-4 text-sm leading-relaxed text-muted-foreground">This account is signed in for patient services only. Doctor portal access requires a Firebase account with the clinician role assigned by the administrator.</p>
+        <div className="mt-7 flex flex-wrap justify-center gap-3">
+          <button type="button" onClick={onBack} className="ring-focus rounded-xl border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted">Back to home</button>
+          <button type="button" onClick={onSignOut} className="ring-focus rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90">Sign out and use clinician account</button>
+        </div>
+      </section>
+    </main>
   )
 }
 
