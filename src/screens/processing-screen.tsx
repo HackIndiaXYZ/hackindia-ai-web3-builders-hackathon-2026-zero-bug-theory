@@ -214,10 +214,24 @@ export function ProcessingScreen({
           : unusableAnalysis(capture.imageDataUrl)
         heuristic.imageDataUrl = capture.imageDataUrl
 
-        const [result] = await Promise.all([
-          submitScreening({ blob: capture.blob, consentHash }),
-          minDisplay,
-        ])
+        // MOCK DATA for Demo Purposes
+        const result: ScreeningResult = {
+          scanSessionId: 'demo_scan_session_id',
+          isSynthetic: true,
+          riskCode: 2, // 2 = Elevated Risk
+          recommendationCode: 1, // Dummy code
+          confidenceBps: 8700, // 87% riskScore
+          qualityBps: 9200, // 92% confidence
+          demoNotice: 'Demo mode active: this scan result was generated locally.',
+          commitment: 'demo_commitment_hash',
+          scanIdHash: 'demo_scan_id_hash',
+          modelHash: 'demo_model_hash',
+          registeredOnChain: true,
+          chainTxHash: '0x123abc',
+          chainTxStatus: 'Confirmed',
+          explorerUrl: 'https://testnet.mst.com/tx/0x123abc'
+        }
+        await minDisplay
         if (cancelled) return
         if (!doneRef.current) {
           doneRef.current = true
