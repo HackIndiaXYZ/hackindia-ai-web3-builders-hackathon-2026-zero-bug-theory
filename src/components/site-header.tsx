@@ -17,7 +17,7 @@
  * -------------------------------------------------------------------------- */
 
 import { useEffect, useState } from 'react'
-import { BookOpen, History, LogOut, ScanEye, Stethoscope } from 'lucide-react'
+import { BookOpen, History, Link2, LogOut, ScanEye, Stethoscope } from 'lucide-react'
 import type { User } from 'firebase/auth'
 
 import { cn } from '@/lib/utils'
@@ -30,6 +30,7 @@ import type { ScreenId } from '@/src/lib/types'
 export interface SiteHeaderProps {
   onHome: () => void
   onLearn: () => void
+  onBlockchain: () => void
   onHistory: () => void
   onScan: () => void
   onDoctorPortal: () => void
@@ -50,6 +51,7 @@ export interface SiteHeaderProps {
 export function SiteHeader({
   onHome,
   onLearn,
+  onBlockchain,
   onHistory,
   onScan,
   onDoctorPortal,
@@ -121,6 +123,12 @@ export function SiteHeader({
             onSelect={onHistory}
             current={active === 'history'}
             count={historyCount}
+          />
+          <HeaderLink
+            label="Proof & care"
+            icon={Link2}
+            onSelect={onBlockchain}
+            current={active === 'blockchain'}
           />
           <HowItWorksSheet>
             <button
@@ -209,3 +217,4 @@ function HeaderLink({
     </button>
   )
 }
+
