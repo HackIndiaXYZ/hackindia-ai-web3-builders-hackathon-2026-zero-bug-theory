@@ -5,10 +5,12 @@ import { LogOut } from 'lucide-react'
 
 export function SiteHeader({
   onHome,
+  onDoctorPortal,
   user,
   onSignOut,
 }: {
   onHome: () => void
+  onDoctorPortal: () => void
   user: User
   onSignOut: () => void
 }) {
@@ -33,6 +35,9 @@ export function SiteHeader({
               How it works
             </button>
           </HowItWorksSheet>
+          <button type="button" onClick={onDoctorPortal} className="text-sm font-medium text-muted-foreground hover:text-foreground">
+            Doctor portal
+          </button>
           <button
             type="button"
             onClick={onSignOut}
