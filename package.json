@@ -5,8 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@12.3.4",
   "scripts": {
-    "dev": "vite --configLoader native",
-    "build": "tsc -b --noCheck && vite build --configLoader native",
+    "dev": "vite",
+    "build": "tsc -b --noCheck && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

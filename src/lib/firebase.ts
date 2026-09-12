@@ -11,6 +11,12 @@ const firebaseConfig = {
 }
 
 export const isFirebaseConfigured = Object.values(firebaseConfig).every(Boolean)
-const firebaseApp = isFirebaseConfigured ? (getApps().length ? getApp() : initializeApp(firebaseConfig)) : null
+
+const firebaseApp = isFirebaseConfigured
+  ? getApps().length > 0
+    ? getApp()
+    : initializeApp(firebaseConfig)
+  : null
+
 export const auth = firebaseApp ? getAuth(firebaseApp) : null
 export const googleProvider = new GoogleAuthProvider()
