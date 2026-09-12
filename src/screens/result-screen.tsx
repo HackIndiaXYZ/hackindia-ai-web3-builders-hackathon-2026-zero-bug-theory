@@ -1,4 +1,5 @@
-import { RotateCcw, Sparkles } from 'lucide-react'
+import { CheckCircle2, RotateCcw, Send, Sparkles } from 'lucide-react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Disclosure } from '@/src/components/disclosure'
 import { riskColorToken, riskExplanation } from '@/src/lib/risk-style'
@@ -17,6 +18,8 @@ export function ResultScreen({
   onSendToDoctor: (patientLabel: string) => void
 }) {
   const token = riskColorToken(analysis.riskLevel)
+  const [patientLabel, setPatientLabel] = useState('')
+  const [submitted, setSubmitted] = useState(false)
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center gap-10 px-6 py-16 lg:px-10">
@@ -83,6 +86,19 @@ export function ResultScreen({
         <Button size="lg" variant="outline" onClick={() => onSendToDoctor('Patient screening')} className="h-12 rounded-full px-6 text-base font-medium">
           Send to doctor
         </Button>
+      </div>
+
+      <div className="w-full max-w-xl rounded-2xl border border-border bg-card/50 p-5">
+        <p className="text-sm font-semibold text-foreground">Send this report to a doctor</p>
+        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">A clinician can review this AI-assisted screening report and leave guidance. No automated medical advice is generated.</p>
+        {submitted ? (
+          <p className="mt-4 flex items-center gap-2 text-sm font-medium text-safe"><CheckCircle2 className="h-4 w-4" /> Report sent to the doctor review queue.</p>
+        ) : (
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <input value={patientLabel} onChange={(event) => setPatientLabel(event.target.value)} placeholder="Patient name or ID (optional)" className="h-10 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary" />
+            <Button onClick={() => { onSendToDoctor(patientLabel.trim() || 'Current patient'); setSubmitted(true) }} className="h-10 rounded-lg"><Send className="h-4 w-4" /> Send for review</Button>
+          </div>
+        )}
       </div>
     </div>
   )
