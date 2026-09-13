@@ -16,7 +16,7 @@
  *
  *   One owner for history. Scan history is loaded once and persisted exactly at
  *   the transition into a result — never on render, and never for a frame the
- *   analyser rejected as too dark.
+ *   V4 quality gate rejected.
  *
  *   One owner for the doctor queue. `reports` is in-memory only — sending a
  *   screening to a clinician is a prototype workflow, not a persisted one, so
@@ -87,7 +87,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   scan: 'Camera',
   processing: 'Analysing your scan',
   result: 'Your screening result',
-  insights: 'V4 model insights',
+  insights: 'V4 model details',
   inconclusive: 'Scan inconclusive',
   history: 'Scan history',
   learn: 'Learn about anaemia',
@@ -283,7 +283,8 @@ export default function App() {
     [replace],
   )
 
-  /** ProcessingScreen has received and validated the deterministic V4 result. */
+  /** ProcessingScreen calls this only for a validated, quality-accepted V4
+   *  response. A rejected capture uses handleRecaptureRequired instead. */
   const handleProcessingDone = useCallback(
     (result: ScanAnalysis) => {
       setAnalysis(result)
@@ -377,7 +378,7 @@ export default function App() {
     <div className="relative flex min-h-dvh w-full flex-col overflow-x-hidden bg-background">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[110] focus:rounded-full focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-110 focus:rounded-full focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
       >
         Skip to content
       </a>
@@ -531,7 +532,7 @@ function OfflineNotice() {
   return (
     <div
       role="status"
-      className="glass fixed top-[calc(env(safe-area-inset-top,0px)+0.75rem)] left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full px-3.5 py-2 text-xs font-medium text-foreground shadow-lift"
+      className="glass fixed top-[calc(env(safe-area-inset-top,0px)+0.75rem)] left-1/2 z-60 flex -translate-x-1/2 items-center gap-2 rounded-full px-3.5 py-2 text-xs font-medium text-foreground shadow-lift"
     >
       <CloudOff className="size-3.5 text-moderate" aria-hidden="true" />
       Offline — reconnect to submit a scan

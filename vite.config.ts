@@ -12,7 +12,7 @@ export default defineConfig({
       manifest: {
         name: 'AnemiaScan',
         short_name: 'AnemiaScan',
-        description: 'A smarter way to screen for anemia risk using your camera and on-device AI.',
+        description: 'A research screening aid using guided camera capture and server-side AI.',
         theme_color: '#0a0c10',
         background_color: '#0a0c10',
         display: 'standalone',
