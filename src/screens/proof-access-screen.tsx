@@ -80,7 +80,7 @@ export function ProofAccessScreen({ user, onAuthenticated, onBack }: ProofAccess
             {!user && mode === 'signup' ? <label className="flex flex-col gap-2 text-sm font-medium">Name<input required value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" className="h-11 border border-input bg-background px-3 outline-none focus:border-primary" /></label> : null}
             {!user ? <label className="flex flex-col gap-2 text-sm font-medium">Email<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" className="h-11 border border-input bg-background px-3 outline-none focus:border-primary" /></label> : null}
             <label className="flex flex-col gap-2 text-sm font-medium">{user ? 'Confirm password' : 'Password'}<input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={user || mode === 'login' ? 'current-password' : 'new-password'} className="h-11 border border-input bg-background px-3 outline-none focus:border-primary" /></label>
-            <Button type="submit" disabled={busy || !isFirebaseConfigured || (Boolean(user) && !user.email)} className="h-12 rounded-none">{busy ? 'Confirming…' : user ? 'Confirm with password' : mode === 'login' ? 'Login to Proof & care' : 'Create Proof & care account'}</Button>
+            <Button type="submit" disabled={busy || !isFirebaseConfigured || (user !== null && !user.email)} className="h-12 rounded-none">{busy ? 'Confirming…' : user ? 'Confirm with password' : mode === 'login' ? 'Login to Proof & care' : 'Create Proof & care account'}</Button>
           </form>
           <Button type="button" variant="outline" disabled={busy || !isFirebaseConfigured} onClick={authenticateWithGoogle} className="mt-4 h-12 w-full rounded-none">{user ? 'Confirm with Google' : 'Continue with Google'}</Button>
           {!isFirebaseConfigured ? <p className="mt-4 text-xs text-risk">Add Firebase values to `.env.local` to enable sign-in.</p> : null}
@@ -91,4 +91,5 @@ export function ProofAccessScreen({ user, onAuthenticated, onBack }: ProofAccess
     </main>
   )
 }
+
 

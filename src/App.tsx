@@ -22,16 +22,15 @@
  *   screening to a clinician is a prototype workflow, not a persisted one, so
  *   it deliberately does not survive a reload the way scan history does.
  *
- *   Scoped auth. Only the doctor portal needs an authenticated clinician —
- *   the scanner itself is the public landing-page flow and stays reachable
- *   without any sign-in. The Firebase gate lives inside the `doctor` branch
- *   below, not around the whole app.
+ *   Scoped access. Doctor dashboard and Proof & care each require their own
+ *   fresh confirmation; neither workspace unlocks the other. The scanner
+ *   itself remains available through its patient flow.
  * -------------------------------------------------------------------------- */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CloudOff } from 'lucide-react'
 import type { User } from 'firebase/auth'
-import { getIdTokenResult, onAuthStateChanged, signOut } from 'firebase/auth'
+import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 
 import { cn } from '@/lib/utils'
@@ -152,25 +151,18 @@ export default function App() {
 
   /* ---- Firebase auth gate ------------------------------------------------ */
   const [user, setUser] = useState<User | null>(null)
-  const [isClinician, setIsClinician] = useState(false)
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured)
   const [proofAccessGranted, setProofAccessGranted] = useState(false)
+  const [doctorAccessGranted, setDoctorAccessGranted] = useState(false)
 
   useEffect(() => {
     if (!auth) return
     return onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser)
-      if (nextUser) {
-        try {
-          const token = await getIdTokenResult(nextUser, true)
-          setIsClinician(token.claims.clinician === true)
-        } catch {
-          setIsClinician(false)
-        }
-      } else {
-        setIsClinician(false)
+      if (!nextUser) {
         setProofAccessGranted(false)
+        setDoctorAccessGranted(false)
       }
       if (nextUser && db) {
         try {
@@ -353,7 +345,10 @@ export default function App() {
     setProofAccessGranted(false)
     push('proof-auth')
   }, [push])
-  const goDoctor = useCallback(() => push('doctor'), [push])
+  const goDoctor = useCallback(() => {
+    setDoctorAccessGranted(false)
+    push('doctor')
+  }, [push])
 
   const handleCaptured = useCallback(
     (next: CapturedImage) => {
@@ -388,6 +383,14 @@ export default function App() {
   const handleProcessingError = useCallback(
     (message: string) => {
       setInconclusiveInfo({ reason: 'error', message })
+      replace('inconclusive')
+    },
+    [replace],
+  )
+
+  const handleRecapture = useCallback(
+    (message: string) => {
+      setInconclusiveInfo({ reason: 'quality', message })
       replace('inconclusive')
     },
     [replace],
@@ -510,6 +513,7 @@ export default function App() {
               capture={capture}
               onDone={handleProcessingDone}
               onError={handleProcessingError}
+              onRecapture={handleRecapture}
             />
           )}
 
@@ -549,18 +553,21 @@ export default function App() {
           )}
 
           {screen === 'doctor' &&
-            // Only the doctor portal needs an authenticated clinician — the
-            // scanner itself is the public landing-page flow and stays
-            // reachable without any sign-in, so auth is gated here, not
-            // around the whole app.
+            // Doctor access is deliberately separate from Proof & care. A
+            // successful doctor sign-in opens this dashboard only for this
+            // visit; entering either workspace never unlocks the other.
             (!authReady ? (
               <div className="min-h-dvh bg-background" />
-            ) : user && isClinician ? (
+            ) : doctorAccessGranted ? (
               <DoctorPortal reports={reports} onBack={() => back('home')} onSaveAdvice={saveDoctorAdvice} />
-            ) : user ? (
-              <ClinicianAccessDenied onSignOut={() => auth && signOut(auth)} onBack={() => back('home')} />
             ) : (
-              <AuthScreen onBack={() => back('home')} />
+              <AuthScreen
+                onBack={() => back('home')}
+                onAuthenticated={() => {
+                  setDoctorAccessGranted(true)
+                  replace('doctor')
+                }}
+              />
             ))}
 
           {screen === 'patient-auth' && (
@@ -617,22 +624,6 @@ export default function App() {
   )
 }
 
-function ClinicianAccessDenied({ onSignOut, onBack }: { onSignOut: () => void; onBack: () => void }) {
-  return (
-    <main className="flex flex-1 items-center justify-center px-6 py-12">
-      <section className="w-full max-w-md border border-border bg-card/60 p-8 text-center shadow-[0_24px_80px_-40px_var(--primary)] sm:p-10">
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary">Doctor portal</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Clinician access required</h1>
-        <p className="mt-4 text-sm leading-relaxed text-muted-foreground">This account is signed in for patient services only. Doctor portal access requires a Firebase account with the clinician role assigned by the administrator.</p>
-        <div className="mt-7 flex flex-wrap justify-center gap-3">
-          <button type="button" onClick={onBack} className="ring-focus rounded-xl border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted">Back to home</button>
-          <button type="button" onClick={onSignOut} className="ring-focus rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90">Sign out and use clinician account</button>
-        </div>
-      </section>
-    </main>
-  )
-}
-
 /* --------------------------------------------------------------------------
  * OfflineNotice — a heads-up rather than a scary error.
  * A real scan is scored by the backend, so it needs a connection; the notice
@@ -667,5 +658,6 @@ function OfflineNotice() {
     </div>
   )
 }
+
 
 
