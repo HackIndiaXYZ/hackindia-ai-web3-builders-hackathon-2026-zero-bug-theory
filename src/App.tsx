@@ -16,7 +16,7 @@
  *
  *   One owner for history. Scan history is loaded once and persisted exactly at
  *   the transition into a result — never on render, and never for a frame the
- *   analyser rejected as too dark.
+ *   V4 quality gate rejected.
  *
  *   One owner for the doctor queue. `reports` is in-memory only — sending a
  *   screening to a clinician is a prototype workflow, not a persisted one, so
@@ -84,16 +84,6 @@ const SCREEN_IDS: ScreenId[] = [
   'proof-auth',
 ]
 
-/**
- * Below this confidence the capture is not worth scoring. `tooDark` in
- * src/lib/analyze.ts only catches an *under*-exposed frame; a blown-out or
- * badly framed one keeps tooDark = false yet lands in single-digit confidence,
- * where the score is noise. Showing "Elevated Risk 97" off a white frame would
- * be the single most misleading thing this app could do, so both cases route to
- * the inconclusive screen and neither is written to history.
- */
-const MIN_SCORABLE_CONFIDENCE = 25
-
 /** Only these are safe to land on from a cold URL — the rest need session state. */
 const DEEP_LINKABLE: ScreenId[] = ['home', 'learn', 'history', 'blockchain']
 
@@ -103,7 +93,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   scan: 'Camera',
   processing: 'Analysing your scan',
   result: 'Your screening result',
-  insights: 'Signal insights',
+  insights: 'V4 model details',
   inconclusive: 'Scan inconclusive',
   history: 'Scan history',
   learn: 'Learn about anaemia',
@@ -328,7 +318,7 @@ export default function App() {
 
   const goHome = useCallback(() => push('home'), [push])
   const goScan = useCallback(() => push('scan'), [push])
-  
+
   const handleBeginScan = useCallback(() => {
     if (!user) {
       push('patient-auth')
@@ -359,18 +349,11 @@ export default function App() {
     [replace],
   )
 
-  /** ProcessingScreen has already submitted the frame to the real screening
-   *  backend (src/lib/api.ts) and merged the result onto the on-device
-   *  heuristic by the time this fires — see src/screens/processing-screen.tsx. */
+  /** ProcessingScreen calls this only for a validated, quality-accepted V4
+   *  response. A rejected capture uses handleRecapture instead. */
   const handleProcessingDone = useCallback(
     (result: ScanAnalysis) => {
       setAnalysis(result)
-      if (result.tooDark || result.confidence < MIN_SCORABLE_CONFIDENCE) {
-        // A rejected frame is never written to history.
-        setInconclusiveInfo({ reason: 'quality' })
-        replace('inconclusive')
-        return
-      }
       setHistory(saveScan(result))
       replace('result')
     },
@@ -462,7 +445,7 @@ export default function App() {
     <div className="relative flex min-h-dvh w-full flex-col overflow-x-hidden bg-background">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[110] focus:rounded-full focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-110 focus:rounded-full focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
       >
         Skip to content
       </a>
@@ -575,8 +558,8 @@ export default function App() {
           )}
 
           {screen === 'patient-profile' && (
-            <PatientProfileScreen 
-              onBack={() => back('home')} 
+            <PatientProfileScreen
+              onBack={() => back('home')}
               onComplete={() => {
                 // Manually set patient profile so we don't have to wait for onAuthStateChanged refetch
                 if (auth?.currentUser) {
@@ -585,7 +568,7 @@ export default function App() {
                   })
                 }
                 replace('scan')
-              }} 
+              }}
             />
           )}
 
@@ -651,13 +634,10 @@ function OfflineNotice() {
   return (
     <div
       role="status"
-      className="glass fixed top-[calc(env(safe-area-inset-top,0px)+0.75rem)] left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full px-3.5 py-2 text-xs font-medium text-foreground shadow-lift"
+      className="glass fixed top-[calc(env(safe-area-inset-top,0px)+0.75rem)] left-1/2 z-60 flex -translate-x-1/2 items-center gap-2 rounded-full px-3.5 py-2 text-xs font-medium text-foreground shadow-lift"
     >
       <CloudOff className="size-3.5 text-moderate" aria-hidden="true" />
       Offline — reconnect to submit a scan
     </div>
   )
 }
-
-
-
