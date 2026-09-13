@@ -19,7 +19,7 @@ from .chain import ChainNotConfigured, get_chain_client
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .reconciliation import reconcile_pending
-from .routers import anemia, audit, auth, carepool, health, registry
+from .routers import anemia, audit, auth, blockchain, carepool, health, registry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("anemiascan")
@@ -114,6 +114,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(anemia.router)
+app.include_router(blockchain.router)
 app.include_router(auth.router)
 app.include_router(registry.router)
 app.include_router(carepool.router)

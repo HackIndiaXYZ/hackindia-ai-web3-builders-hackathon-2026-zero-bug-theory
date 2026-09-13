@@ -23,6 +23,11 @@ eth-utils==4.1.1
 eth-typing==4.4.0
 hexbytes==0.3.1
 ckzg==1.0.2
+# Keep the Web3 6.x dependency family internally consistent. Newer eth-rlp
+# and py-ecc releases pull hexbytes 1.x, while this supported Web3 release
+# requires hexbytes <0.4.
+eth-rlp==1.0.1
+py-ecc==7.0.1
 
 pytest==8.4.2
 httpx==0.28.1

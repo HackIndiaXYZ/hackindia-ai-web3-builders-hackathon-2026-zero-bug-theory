@@ -1082,7 +1082,10 @@ export function ScanScreen({ onCapture, onExit }: ScanScreenProps) {
           <div className="flex w-full max-w-sm items-center justify-between">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                setAutoCapture(false)
+                fileInputRef.current?.click()
+              }}
               disabled={capturing}
               className={OVERLAY_BUTTON}
               aria-label="Use a photo from this device instead"

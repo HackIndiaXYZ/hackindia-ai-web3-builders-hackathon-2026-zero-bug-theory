@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     session_secret: str = "dev-insecure-change-me"
     session_ttl_seconds: int = 3600
 
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"
+    # Vite is configured to use port 3000 in this repository. Keep 5173 for
+    # developers using Vite's default, but allow the shipped local UI to read
+    # public proof/configuration endpoints from this API too.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
 
     @property
     def cors_origin_list(self) -> list[str]:
