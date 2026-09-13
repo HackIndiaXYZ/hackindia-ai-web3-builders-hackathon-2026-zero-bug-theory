@@ -393,6 +393,14 @@ export default function App() {
     [replace],
   )
 
+  const handleRecapture = useCallback(
+    (message: string) => {
+      setInconclusiveInfo({ reason: 'quality', message })
+      replace('inconclusive')
+    },
+    [replace],
+  )
+
   const handleOpenFromHistory = useCallback(
     (item: ScanAnalysis) => {
       setAnalysis(item)
@@ -510,6 +518,7 @@ export default function App() {
               capture={capture}
               onDone={handleProcessingDone}
               onError={handleProcessingError}
+              onRecapture={handleRecapture}
             />
           )}
 
@@ -560,7 +569,10 @@ export default function App() {
             ) : user ? (
               <ClinicianAccessDenied onSignOut={() => auth && signOut(auth)} onBack={() => back('home')} />
             ) : (
-              <AuthScreen onBack={() => back('home')} />
+              <AuthScreen
+                onBack={() => back('home')}
+                onAuthenticated={() => replace('doctor')}
+              />
             ))}
 
           {screen === 'patient-auth' && (
@@ -667,5 +679,6 @@ function OfflineNotice() {
     </div>
   )
 }
+
 
 
