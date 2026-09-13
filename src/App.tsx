@@ -55,6 +55,7 @@ import { ResultScreen } from '@/src/screens/result-screen'
 import { ScanScreen } from '@/src/screens/scan-screen'
 import { PatientAuthScreen } from '@/src/screens/patient-auth-screen'
 import { PatientProfileScreen } from '@/src/screens/patient-profile-screen'
+import { ProofAccessScreen } from '@/src/screens/proof-access-screen'
 
 /** Screens that take over the viewport: no header, no tab bar, no page chrome. */
 const IMMERSIVE_SCREENS: ScreenId[] = ['scan', 'processing']
@@ -81,6 +82,7 @@ const SCREEN_IDS: ScreenId[] = [
   'doctor',
   'patient-auth',
   'patient-profile',
+  'proof-auth',
 ]
 
 /**
@@ -110,6 +112,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   doctor: 'Doctor portal',
   'patient-auth': 'Patient sign in',
   'patient-profile': 'Patient Profile',
+  'proof-auth': 'Proof and care access',
 }
 
 interface ShellHistoryState {
@@ -152,10 +155,7 @@ export default function App() {
   const [isClinician, setIsClinician] = useState(false)
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured)
-  // The sign-in screen is shared by the scan and Proof & care flows. Keep
-  // the requested destination in memory so a completed sign-in returns the
-  // person to the feature they selected, not to the scan flow.
-  const [authReturnTo, setAuthReturnTo] = useState<ScreenId | null>(null)
+  const [proofAccessGranted, setProofAccessGranted] = useState(false)
 
   useEffect(() => {
     if (!auth) return
@@ -170,6 +170,7 @@ export default function App() {
         }
       } else {
         setIsClinician(false)
+        setProofAccessGranted(false)
       }
       if (nextUser && db) {
         try {
@@ -229,26 +230,21 @@ export default function App() {
   /* ---- patient auth auto-redirect ---------------------------------------- */
   useEffect(() => {
     if (screen === 'patient-auth' && user) {
-      if (authReturnTo) {
-        const destination = authReturnTo
-        setAuthReturnTo(null)
-        replace(destination)
-      } else if (patientProfile === null) {
+      if (patientProfile === null) {
         replace('patient-profile')
       } else if (patientProfile !== undefined) {
         replace('scan')
       }
     }
-  }, [screen, user, patientProfile, authReturnTo, replace])
+  }, [screen, user, patientProfile, replace])
 
-  // A direct #/blockchain link follows the same Firebase gate as the header
-  // button. The blockchain workspace itself remains unchanged after sign-in.
+  // Proof & care always needs its own fresh confirmation, even when scan
+  // authentication and the patient profile are already complete.
   useEffect(() => {
-    if (screen === 'blockchain' && authReady && !user) {
-      setAuthReturnTo('blockchain')
-      replace('patient-auth')
+    if (screen === 'blockchain' && !proofAccessGranted) {
+      replace('proof-auth')
     }
-  }, [screen, authReady, user, replace])
+  }, [screen, proofAccessGranted, replace])
 
   /** Pop one entry when we own one, otherwise fall back inside the app. */
   const back = useCallback(
@@ -354,13 +350,9 @@ export default function App() {
   const goHistory = useCallback(() => push('history'), [push])
   const goLearn = useCallback(() => push('learn'), [push])
   const goBlockchain = useCallback(() => {
-    if (!user) {
-      setAuthReturnTo('blockchain')
-      push('patient-auth')
-      return
-    }
-    push('blockchain')
-  }, [user, push])
+    setProofAccessGranted(false)
+    push('proof-auth')
+  }, [push])
   const goDoctor = useCallback(() => push('doctor'), [push])
 
   const handleCaptured = useCallback(
@@ -589,6 +581,17 @@ export default function App() {
               }} 
             />
           )}
+
+          {screen === 'proof-auth' && (
+            <ProofAccessScreen
+              user={user}
+              onBack={() => back('home')}
+              onAuthenticated={() => {
+                setProofAccessGranted(true)
+                replace('blockchain')
+              }}
+            />
+          )}
         </div>
       </main>
 
@@ -664,4 +667,5 @@ function OfflineNotice() {
     </div>
   )
 }
+
 

@@ -22,6 +22,7 @@ export type ScreenId =
   | 'doctor'
   | 'patient-auth'
   | 'patient-profile'
+  | 'proof-auth'
 
 /**
  * The three screening bands the V4 result reports. These are risk *bands*,
@@ -133,3 +134,4 @@ export interface PatientProfile {
   gender: string
   medicalNotes?: string
 }
+
