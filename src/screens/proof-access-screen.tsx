@@ -73,8 +73,8 @@ export function ProofAccessScreen({ user, onAuthenticated, onBack }: ProofAccess
         <div className="flex flex-col items-center text-center">
           <AppLogo className="mb-6 h-14 w-14" />
           <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary">Proof & care</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">Confirm access</h1>
-          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">Proof & care has its own sign-in. Scan access and profile details are not required here.</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight">Patient / Doctors / Clinic</h1>
+          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">Sign in to securely access your Proof & care workspace.</p>
           {user ? <p className="mt-6 text-xs text-muted-foreground">Signed in as {user.email ?? 'your Firebase account'}. Confirm again to open Proof & care.</p> : <div className="mt-6 grid w-full grid-cols-2 border-b border-border">{(['login', 'signup'] as const).map((option) => <button key={option} type="button" onClick={() => { setMode(option); setError('') }} className={`border-b-2 pb-3 text-sm font-medium ${mode === option ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground'}`}>{option === 'login' ? 'Login' : 'Sign up'}</button>)}</div>}
           <form className="mt-5 flex w-full flex-col gap-3 text-left" onSubmit={authenticateWithPassword}>
             {!user && mode === 'signup' ? <label className="flex flex-col gap-2 text-sm font-medium">Name<input required value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" className="h-11 border border-input bg-background px-3 outline-none focus:border-primary" /></label> : null}
