@@ -1,0 +1,52 @@
+{
+  "hosting": {
+    "site": "animeascan",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "anemiascan-backend",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/registry/**",
+        "run": {
+          "serviceId": "anemiascan-backend",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/auth/**",
+        "run": {
+          "serviceId": "anemiascan-backend",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/health",
+        "run": {
+          "serviceId": "anemiascan-backend",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/blockchain/**",
+        "run": {
+          "serviceId": "anemiascan-backend",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
