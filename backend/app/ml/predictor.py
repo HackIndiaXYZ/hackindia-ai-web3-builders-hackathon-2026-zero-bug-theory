@@ -264,11 +264,19 @@ class AnemiaScanV4Predictor:
             self.feature_mean = scalers["feature_mean"].astype(np.float32)
             self.feature_std = scalers["feature_std"].astype(np.float32)
 
-        # Load ONNX Models
+        # Load ONNX Models with aggressive low-memory settings
         providers = ["CPUExecutionProvider"]
-        self.efficientnet = ort.InferenceSession(str(self.root / "efficientnet_b3.onnx"), providers=providers)
-        self.convnext = ort.InferenceSession(str(self.root / "convnext_tiny.onnx"), providers=providers)
-        self.vit = ort.InferenceSession(str(self.root / "vit_b16.onnx"), providers=providers)
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        sess_options.enable_cpu_mem_arena = False
+        sess_options.enable_mem_pattern = False
+        
+        self.efficientnet = ort.InferenceSession(str(self.root / "efficientnet_b3.onnx"), providers=providers, sess_options=sess_options)
+        self.convnext = ort.InferenceSession(str(self.root / "convnext_tiny.onnx"), providers=providers, sess_options=sess_options)
+        self.vit = ort.InferenceSession(str(self.root / "vit_b16.onnx"), providers=providers, sess_options=sess_options)
 
         self.stacker = joblib.load(self.root / "stacking_model.joblib")
 
