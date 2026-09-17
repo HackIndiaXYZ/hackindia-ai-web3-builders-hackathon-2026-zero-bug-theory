@@ -3,7 +3,7 @@ services:
     name: anemiascan-backend
     env: python
     region: ohio
-    plan: starter # ML models require memory; you might need a Starter/Pro plan for PyTorch inference
+    plan: free # Changed to free to avoid billing, but note the 512MB memory limit
     rootDir: backend
     buildCommand: "bash ./render-build.sh"
     startCommand: "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
