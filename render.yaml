@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: anemiascan-backend
+    env: python
+    region: ohio
+    plan: starter # ML models require memory; you might need a Starter/Pro plan for PyTorch inference
+    rootDir: backend
+    buildCommand: "bash ./render-build.sh"
+    startCommand: "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: ML_DEVICE
+        value: cpu
+      # Set your other env variables below directly in Render dashboard:
+      # - MST_RPC_URL
+      # - MST_REGISTRY_ADDRESS
+      # - MST_POOL_ADDRESS
+      # - MST_ATTESTER_PRIVATE_KEY
+      # - MST_ISSUER_PRIVATE_KEY
+      # - MST_CLINIC_PRIVATE_KEY
