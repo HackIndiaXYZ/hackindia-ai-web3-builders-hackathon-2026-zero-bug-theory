@@ -20,7 +20,7 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-MODEL_VERSION = "anemiascan-v4-onnx-int8"
+MODEL_VERSION = "anemiascan-v4-eff-conv-vit"
 MODEL_ASSETS_DIR = Path(__file__).resolve().parent / "model_assets"
 CORRECTED_OPERATING_THRESHOLD = 0.24259322528166496
 UNCERTAINTY_MARGIN = 0.06909162763627245
