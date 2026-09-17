@@ -1,10 +1,10 @@
 import { type FormEvent, useState } from 'react'
-import { EmailAuthProvider, createUserWithEmailAndPassword, reauthenticateWithCredential, reauthenticateWithPopup, signInWithEmailAndPassword, signInWithPopup, type User, updateProfile } from 'firebase/auth'
+import { EmailAuthProvider, createUserWithEmailAndPassword, reauthenticateWithCredential, reauthenticateWithPopup, reauthenticateWithRedirect, signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, type User, updateProfile } from 'firebase/auth'
 import { ArrowLeft, ShieldCheck } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/src/components/app-logo'
-import { auth, googleProvider, isFirebaseConfigured } from '@/src/lib/firebase'
+import { auth, getAuthErrorMessage, googleProvider, isFirebaseConfigured } from '@/src/lib/firebase'
 
 interface ProofAccessScreenProps {
   user: User | null
@@ -60,7 +60,12 @@ export function ProofAccessScreen({ user, onAuthenticated, onBack }: ProofAccess
       else await signInWithPopup(auth!, googleProvider)
       onAuthenticated()
     } catch (authError) {
-      setError(authError instanceof Error && authError.message.includes('popup-closed-by-user') ? 'The confirmation window was closed.' : 'Google confirmation could not be completed.')
+      if (typeof authError === 'object' && authError !== null && 'code' in authError && String(authError.code).includes('popup-blocked')) {
+        if (user) await reauthenticateWithRedirect(user, googleProvider)
+        else await signInWithRedirect(auth!, googleProvider)
+        return
+      }
+      setError(getAuthErrorMessage(authError))
     } finally {
       setBusy(false)
     }

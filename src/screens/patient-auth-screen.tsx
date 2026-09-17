@@ -4,11 +4,12 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   updateProfile,
 } from 'firebase/auth'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/src/components/app-logo'
-import { auth, googleProvider, isFirebaseConfigured } from '@/src/lib/firebase'
+import { auth, getAuthErrorMessage, googleProvider, isFirebaseConfigured } from '@/src/lib/firebase'
 
 type AuthMode = 'login' | 'signup'
 
@@ -64,11 +65,11 @@ export function PatientAuthScreen({ onBack }: { onBack?: () => void }) {
     try {
       await signInWithPopup(auth, googleProvider)
     } catch (signInError) {
-      if (signInError instanceof Error && signInError.message.includes('popup-closed-by-user')) {
-        setError('The sign-in window was closed. Try again when you are ready.')
-      } else {
-        setError('We could not complete sign-in. Check your Firebase Auth settings and try again.')
+      if (typeof signInError === 'object' && signInError !== null && 'code' in signInError && String(signInError.code).includes('popup-blocked')) {
+        await signInWithRedirect(auth, googleProvider)
+        return
       }
+      setError(getAuthErrorMessage(signInError))
     } finally {
       setBusy(false)
     }
