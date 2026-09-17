@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "animeascan",
+    "site": "anemiascan-5956d",
     "public": "dist",
     "ignore": [
       "firebase.json",
