@@ -8,7 +8,7 @@ pip install gdown
 echo "Downloading AnemiaScan V4 bundle from Google Drive..."
 # The ID is extracted from the Google Drive link provided
 FILE_ID="1Nr3Ga50QDU28QCs87qPiGSPx90r6LcEt"
-gdown --id "$FILE_ID" -O anemiascan_bundle.zip
+gdown "$FILE_ID" -O anemiascan_bundle.zip
 
 echo "Installing CPU version of PyTorch..."
 pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
