@@ -2,16 +2,19 @@
 # exit on error
 set -o errexit
 
+echo "Compiling smart contracts to generate ABIs..."
+cd ../contracts
+npm install
+npx hardhat compile
+cd ../backend
+
 echo "Installing gdown to download from Google Drive..."
 pip install gdown
 
-echo "Downloading AnemiaScan V4 bundle from Google Drive..."
-# The ID is extracted from the Google Drive link provided
-FILE_ID="1Nr3Ga50QDU28QCs87qPiGSPx90r6LcEt"
+echo "Downloading ONNX bundle from Google Drive..."
+# WARNING: REPLACE THIS ID WITH THE NEW ID FROM YOUR ONNX ZIP
+FILE_ID="1_NUuKAxReJghiI73YUrbcebOBtEyuC7e"
 gdown "$FILE_ID" -O anemiascan_bundle.zip
-
-echo "Installing CPU version of PyTorch..."
-pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchvision==0.20.1
 
 echo "Installing Python dependencies..."
 pip install -r requirements.txt
