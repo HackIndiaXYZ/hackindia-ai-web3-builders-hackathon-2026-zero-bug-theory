@@ -111,7 +111,7 @@ export function ResultScreen({
             <CardContent>
               <dl className="space-y-3 text-xs">
                 <div><dt className="text-muted-foreground">Model</dt><dd className="mt-0.5 font-medium">{analysis.modelVersion}</dd></div>
-                <div><dt className="text-muted-foreground">Model hash</dt><dd className="mt-0.5 break-all font-mono">{analysis.modelHash?.slice(0, 18)}…</dd></div>
+                <div><dt className="text-muted-foreground">Patient ID</dt><dd className="mt-0.5 break-all font-mono">{analysis.id}</dd></div>
                 <div><dt className="text-muted-foreground">Image quality</dt><dd className="mt-0.5 font-medium">Accepted by the V4 quality gate</dd></div>
               </dl>
             </CardContent>

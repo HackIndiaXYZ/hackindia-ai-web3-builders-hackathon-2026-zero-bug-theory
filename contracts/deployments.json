@@ -1,0 +1,13 @@
+{
+  "testnet": {
+    "chainId": 91562037,
+    "deployer": "0xE2dbe9caD33135E4Bc44e70368ed644A6183C788",
+    "deployedAt": "2026-09-13T03:30:04.994Z",
+    "AnemiaRegistry": {
+      "address": "0x8666edc26DCfa782D321ad640a4Ee9B5090Ecb89"
+    },
+    "CarePool": {
+      "address": "0x065Ff49c13bb49f3E9c934785D81A71AE2B3277A"
+    }
+  }
+}
