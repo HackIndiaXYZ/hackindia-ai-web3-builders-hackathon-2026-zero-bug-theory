@@ -17,14 +17,13 @@ CORRECTED_THRESHOLD = 0.24259322528166496
 UNCERTAINTY_MARGIN = 0.06909162763627245
 
 REQUIRED_FILES = {
-    "base_models/efficientnet_b3_best.pth",
-    "base_models/convnext_tiny_best.pth",
-    "vit_b16_best.pth",
+    "efficientnet_b3.onnx",
+    "convnext_tiny.onnx",
+    "vit_b16.onnx",
     "stacking_model.joblib",
     "train_only_scalers.npz",
     "runtime_config.json",
     "metrics.json",
-    "inference.py",
 }
 
 
@@ -137,7 +136,7 @@ def install_bundle(source: Path, destination: Path = DEFAULT_DESTINATION) -> dic
 
         runtime, metrics = _validate_configuration(staging)
         manifest = {
-            "model_version": "anemiascan-v4-eff-conv-vit",
+            "model_version": "anemiascan-v4-onnx-int8",
             "model_hash": _model_hash(staging),
             "hash_algorithm": "sha256-required-path-and-content-v1",
             "selected_candidate": runtime["selected_candidate"],
