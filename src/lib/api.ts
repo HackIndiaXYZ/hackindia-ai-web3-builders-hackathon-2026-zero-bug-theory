@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '')
+// TODO: Replace this string with your actual Render backend URL!
+const API_BASE_URL = 'https://anemiascan-backend.onrender.com'
 
 export type AnemiaDecision = 'higher_risk' | 'lower_risk' | 'uncertain' | 'recapture_required'
 
@@ -114,7 +115,7 @@ export interface BlockchainHealth {
   carePoolAddress: string
 }
 
-export interface ScreeningProof extends ScreeningResult {}
+export interface ScreeningProof extends ScreeningResult { }
 
 export interface OnChainPool {
   poolId: number
