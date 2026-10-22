@@ -15,6 +15,13 @@ from ..ml.predictor import (
     ModelUnavailableError,
     get_predictor,
 )
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from ..db import get_db
+from ..models import ScanSession
+from ..commitment import build_screening_commitment
+from ..routers.registry import _random_hash32
+from ..inference import _DECISION_TO_CODES
 
 router = APIRouter(prefix="/api/anemia", tags=["anemia-v4"])
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png"}
@@ -56,7 +63,7 @@ class AnalyzeResponse(BaseModel):
     quality: QualityResponse
     benchmark: BenchmarkResponse
     warning: str
-
+    scanHash: str
 
 async def _read_limited(upload: UploadFile, maximum: int) -> bytes:
     chunks: list[bytes] = []
@@ -75,7 +82,13 @@ async def _read_limited(upload: UploadFile, maximum: int) -> bytes:
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_anemia(image: UploadFile = File(...)) -> AnalyzeResponse:
+async def analyze_anemia(
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db)
+) -> AnalyzeResponse:
+    import hashlib
+    import time
+    import uuid
     settings = get_settings()
     if image.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(422, "Upload a PNG or JPEG conjunctiva ROI image.")
@@ -85,6 +98,53 @@ async def analyze_anemia(image: UploadFile = File(...)) -> AnalyzeResponse:
         prediction = await run_in_threadpool(predictor.predict_bytes, image_bytes)
         quality = prediction["quality"]
         benchmark = predictor.internal_benchmark()
+        
+        if prediction["decision"] == "recapture_required":
+            scan_hash = "not-applicable"
+        else:
+            risk_code, recommendation_code = _DECISION_TO_CODES[prediction["decision"]]
+            confidence_bps = max(0, min(10000, round(prediction["screening_probability"] * 10000)))
+            quality_bps = 10000
+            scan_id_hash = _random_hash32()
+            salt = _random_hash32()
+            image_digest = "0x" + hashlib.sha256(image_bytes).hexdigest()
+            captured_at = int(time.time())
+            dummy_consent = "0x" + "00" * 32
+            
+            commitment = build_screening_commitment(
+                scan_id_hash=scan_id_hash,
+                image_digest=image_digest,
+                model_hash=predictor.model_hash,
+                risk_code=risk_code,
+                recommendation_code=recommendation_code,
+                confidence_bps=confidence_bps,
+                quality_bps=quality_bps,
+                consent_hash=dummy_consent,
+                captured_at=captured_at,
+                salt=salt,
+            )
+            
+            scan_session = ScanSession(
+                scan_id_hash=scan_id_hash,
+                image_digest=image_digest,
+                model_hash=predictor.model_hash,
+                risk_code=risk_code,
+                recommendation_code=recommendation_code,
+                confidence_bps=confidence_bps,
+                quality_bps=quality_bps,
+                consent_hash=dummy_consent,
+                captured_at=captured_at,
+                salt=salt,
+                commitment=commitment,
+                is_synthetic=False,
+                registered_on_chain=False,
+            )
+            db.add(scan_session)
+            db.commit()
+            
+            scan_hash = scan_id_hash
+
+        
         return AnalyzeResponse(
             modelVersion=MODEL_VERSION,
             modelHash=predictor.model_hash,
@@ -110,6 +170,7 @@ async def analyze_anemia(image: UploadFile = File(...)) -> AnalyzeResponse:
                 confusionMatrix=ConfusionMatrixResponse(**benchmark["confusion_matrix"]),
             ),
             warning=prediction["warning"],
+            scanHash=scan_hash,
         )
     except HTTPException:
         raise

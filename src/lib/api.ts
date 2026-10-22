@@ -32,6 +32,7 @@ export interface AnemiaAnalysisResult {
   quality: AnemiaQuality
   benchmark: InternalBenchmark
   warning: string
+  scanHash: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,6 +68,7 @@ function parseAnemiaResult(value: unknown): AnemiaAnalysisResult {
     if (typeof matrix[key] !== 'number' || !Number.isInteger(matrix[key]) || matrix[key] < 0) throw new Error('The V4 benchmark has an invalid confusion matrix.')
   }
   if (typeof value.warning !== 'string' || !value.warning.trim()) throw new Error('The V4 response is missing its medical warning.')
+  if (typeof (value as any).scanHash !== 'string') throw new Error('The V4 response is missing its scanHash.')
 
   return value as unknown as AnemiaAnalysisResult
 }

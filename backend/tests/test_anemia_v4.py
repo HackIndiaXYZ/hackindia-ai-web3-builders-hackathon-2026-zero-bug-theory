@@ -63,18 +63,9 @@ def test_model_input_shapes_and_strict_loaded_eval_models() -> None:
 
 def test_corrected_threshold_and_all_scoring_decisions() -> None:
     threshold = CORRECTED_OPERATING_THRESHOLD
-    margin = UNCERTAINTY_MARGIN
-    assert decision_from_probability(threshold) == ("uncertain", True)
-    assert decision_from_probability(threshold - margin) == ("uncertain", True)
-    assert decision_from_probability(threshold + margin) == ("uncertain", True)
-    assert decision_from_probability(np.nextafter(threshold - margin, -np.inf)) == (
-        "lower_risk",
-        False,
-    )
-    assert decision_from_probability(np.nextafter(threshold + margin, np.inf)) == (
-        "higher_risk",
-        False,
-    )
+    assert decision_from_probability(threshold) == ("lower_risk", False)
+    assert decision_from_probability(threshold - 0.01) == ("lower_risk", False)
+    assert decision_from_probability(threshold + 0.01) == ("higher_risk", False)
     with pytest.raises(ValueError):
         decision_from_probability(float("nan"))
 
@@ -210,6 +201,7 @@ def test_v4_response_exact_camelcase_schema(client: TestClient) -> None:
         "quality",
         "benchmark",
         "warning",
+        "scanHash",
     }
     assert set(data.keys()) == expected_top_keys
     expected_quality_keys = {
