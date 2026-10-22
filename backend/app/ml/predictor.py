@@ -22,8 +22,8 @@ from PIL import Image
 
 MODEL_VERSION = "anemiascan-v4-eff-conv-vit"
 MODEL_ASSETS_DIR = Path(__file__).resolve().parent / "model_assets"
-CORRECTED_OPERATING_THRESHOLD = 0.24259322528166496
-UNCERTAINTY_MARGIN = 0.06909162763627245
+CORRECTED_OPERATING_THRESHOLD = 0.58
+UNCERTAINTY_MARGIN = 0.0
 WARNING = (
     "Research screening result only. Confirm using a CBC/hemoglobin test and "
     "professional evaluation."
@@ -216,11 +216,8 @@ def build_stacker_input(
 def decision_from_probability(probability: float) -> tuple[str, bool]:
     if not np.isfinite(probability) or not 0 <= probability <= 1:
         raise ValueError("The calibrated screening probability must be finite and in [0, 1].")
-    uncertain = abs(probability - CORRECTED_OPERATING_THRESHOLD) <= UNCERTAINTY_MARGIN
-    if uncertain:
-        return "uncertain", True
     return (
-        "higher_risk" if probability >= CORRECTED_OPERATING_THRESHOLD else "lower_risk",
+        "higher_risk" if probability > CORRECTED_OPERATING_THRESHOLD else "lower_risk",
         False,
     )
 

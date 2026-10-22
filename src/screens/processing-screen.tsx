@@ -57,6 +57,7 @@ function toAnalysis(result: AnemiaAnalysisResult, capture: CapturedImage): ScanA
     modelQuality: result.quality,
     internalBenchmark: result.benchmark,
     warning: result.warning,
+    scanHash: result.scanHash,
   }
 }
 

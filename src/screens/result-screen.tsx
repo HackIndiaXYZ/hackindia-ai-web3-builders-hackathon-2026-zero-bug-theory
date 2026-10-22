@@ -75,7 +75,7 @@ export function ResultScreen({
               <Progress value={probability * 100} tone={token} label={`Calibrated screening score ${percent(probability)}`} />
               <div className="flex flex-wrap justify-between gap-3 text-xs text-muted-foreground">
                 <span>Operating threshold {percent(threshold)}</span>
-                <span>{analysis.uncertain ? 'Score is within the configured uncertainty margin' : probability >= threshold ? 'Score is above the operating threshold' : 'Score is below the operating threshold'}</span>
+                <span>{analysis.uncertain ? 'Score is within the configured uncertainty margin' : probability > threshold ? 'Score is above the operating threshold' : 'Score is below the operating threshold'}</span>
               </div>
             </CardContent>
           </Card>
@@ -112,6 +112,7 @@ export function ResultScreen({
               <dl className="space-y-3 text-xs">
                 <div><dt className="text-muted-foreground">Model</dt><dd className="mt-0.5 font-medium">{analysis.modelVersion}</dd></div>
                 <div><dt className="text-muted-foreground">Patient ID</dt><dd className="mt-0.5 break-all font-mono">{analysis.id}</dd></div>
+                {analysis.scanHash && (<div><dt className="text-muted-foreground">Result Hash</dt><dd className="mt-0.5 break-all font-mono">{analysis.scanHash}</dd></div>)}
                 <div><dt className="text-muted-foreground">Image quality</dt><dd className="mt-0.5 font-medium">Accepted by the V4 quality gate</dd></div>
               </dl>
             </CardContent>

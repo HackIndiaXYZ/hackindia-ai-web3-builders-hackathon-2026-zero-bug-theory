@@ -108,6 +108,7 @@ export interface ScanAnalysis {
     confusionMatrix: { tn: number; fp: number; fn: number; tp: number }
   }
   warning?: string
+  scanHash?: string
 }
 
 /** A just-captured frame, before it has been analysed. */
