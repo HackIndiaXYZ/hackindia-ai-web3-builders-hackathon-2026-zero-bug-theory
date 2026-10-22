@@ -5,6 +5,6 @@ minimumReleaseAgeExclude:
   - next
 
 allowBuilds:
-  '@firebase/util': set this to true or false
-  core-js: set this to true or false
-  protobufjs: set this to true or false
+  '@firebase/util': true
+  core-js: true
+  protobufjs: true
